@@ -18,12 +18,16 @@
   <string name="error_bookmark_title_required">Enter a title</string>
   <string name="error_bookmark_url_duplicate">This URL is already saved</string>
   <string name="error_bookmark_url_invalid">URL must start with https://novelpia.com/</string>
+  <string name="menu_back">Back</string>
   <string name="menu_bookmarks">Bookmarks</string>
   <string name="menu_edit">Edit</string>
   <string name="menu_edit_order">Edit Order</string>
   <string name="menu_export_bookmarks">Export Bookmarks</string>
+  <string name="menu_forward">Forward</string>
   <string name="menu_import_bookmarks">Import Bookmarks</string>
+  <string name="menu_refresh">Refresh</string>
   <string name="menu_settings">Settings</string>
+  <string name="menu_start_page">Start Page</string>
   <string name="msg_bookmarks_empty">No bookmarks</string>
   <string name="msg_bookmarks_export_failed">Failed to export bookmarks</string>
   <string name="msg_bookmarks_exported">Bookmarks exported</string>

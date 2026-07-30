@@ -19,12 +19,16 @@
   <string name="error_bookmark_title_required">제목을 입력하세요</string>
   <string name="error_bookmark_url_duplicate">이미 저장된 URL입니다</string>
   <string name="error_bookmark_url_invalid">URL은 https://novelpia.com/로 시작해야 합니다</string>
+  <string name="menu_back">뒤로 가기</string>
   <string name="menu_bookmarks">즐겨찾기</string>
   <string name="menu_edit">편집</string>
   <string name="menu_edit_order">순서 편집</string>
   <string name="menu_export_bookmarks">즐겨찾기 목록 내보내기</string>
+  <string name="menu_forward">앞으로 가기</string>
   <string name="menu_import_bookmarks">즐겨찾기 목록 불러오기</string>
+  <string name="menu_refresh">새로 고침</string>
   <string name="menu_settings">설정</string>
+  <string name="menu_start_page">시작 페이지</string>
   <string name="msg_bookmarks_empty">즐겨찾기가 없습니다</string>
   <string name="msg_bookmarks_export_failed">즐겨찾기 내보내기에 실패했습니다</string>
   <string name="msg_bookmarks_exported">즐겨찾기를 내보냈습니다</string>

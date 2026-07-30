@@ -14,6 +14,8 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.BaseAdapter
+import android.widget.ImageButton
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
@@ -21,6 +23,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.TooltipCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
@@ -219,33 +222,91 @@ class MainActivity : AppCompatActivity() {
   private fun showMainMenu() {
     val menuItems =
       listOf(
-        MainMenuItem.Action(R.drawable.ic_star_24, getString(R.string.menu_bookmarks)),
+        MainMenuItem.QuickActions(
+          listOf(
+            MainMenuAction.Back,
+            MainMenuAction.Forward,
+            MainMenuAction.Refresh,
+            MainMenuAction.Bookmarks,
+            MainMenuAction.StartPage,
+          ),
+        ),
         MainMenuItem.Divider,
-        MainMenuItem.Action(R.drawable.ic_settings_24, getString(R.string.menu_settings)),
+        MainMenuItem.Action(
+          R.drawable.ic_settings_24,
+          getString(R.string.menu_settings),
+          MainMenuAction.Settings,
+        ),
       )
+    var dialog: AlertDialog? = null
     AlertDialog
       .Builder(this)
-      .setAdapter(MainMenuAdapter(menuItems)) { _, which ->
+      .setAdapter(
+        MainMenuAdapter(menuItems) { action ->
+          dialog?.dismiss()
+          handleMainMenuAction(action)
+        },
+      ) { _, which ->
         when (menuItems[which]) {
           is MainMenuItem.Action -> {
-            if (which == 0) {
-              bookmarkLauncher.launch(
-                Intent(this, BookmarksActivity::class.java)
-                  .putExtra(BookmarksActivity.EXTRA_CURRENT_TITLE, webView.title.orEmpty())
-                  .putExtra(BookmarksActivity.EXTRA_CURRENT_URL, webView.url.orEmpty()),
-              )
-            } else {
-              startActivity(Intent(this, SettingsActivity::class.java))
-            }
+            dialog?.dismiss()
+            handleMainMenuAction((menuItems[which] as MainMenuItem.Action).action)
           }
 
-          MainMenuItem.Divider -> Unit
+          is MainMenuItem.QuickActions,
+          MainMenuItem.Divider,
+          -> {
+            // KtLint somehow forces me to use this format and warns me about unused Unit at the same time. Stupid tool...
+            @Suppress("UnusedExpression")
+            Unit
+          }
         }
       }.show()
+      .also { dialog = it }
+  }
+
+  private fun handleMainMenuAction(action: MainMenuAction) {
+    when (action) {
+      MainMenuAction.Back -> goBackInWebView()
+      MainMenuAction.Forward -> goForwardInWebView()
+      MainMenuAction.Refresh -> webView.reload()
+      MainMenuAction.Bookmarks -> openBookmarks()
+      MainMenuAction.StartPage -> openStartPage()
+      MainMenuAction.Settings -> startActivity(Intent(this, SettingsActivity::class.java))
+    }
+  }
+
+  private fun goBackInWebView() {
+    if (!webView.canGoBack()) return
+    if (webView.url?.contains(VIEWER_URL_PART) == true) {
+      restoringFromViewer = true
+    }
+    saveScrollPosition()
+    webView.goBack()
+  }
+
+  private fun goForwardInWebView() {
+    if (!webView.canGoForward()) return
+    saveScrollPosition()
+    webView.goForward()
+  }
+
+  private fun openBookmarks() {
+    bookmarkLauncher.launch(
+      Intent(this, BookmarksActivity::class.java)
+        .putExtra(BookmarksActivity.EXTRA_CURRENT_TITLE, webView.title.orEmpty())
+        .putExtra(BookmarksActivity.EXTRA_CURRENT_URL, webView.url.orEmpty()),
+    )
+  }
+
+  private fun openStartPage() {
+    saveScrollPosition()
+    webView.loadUrl(getStartPageUrl())
   }
 
   private inner class MainMenuAdapter(
     private val items: List<MainMenuItem>,
+    private val onActionClick: (MainMenuAction) -> Unit,
   ) : BaseAdapter() {
     override fun getCount(): Int = items.size
 
@@ -253,7 +314,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun getItemId(position: Int): Long = position.toLong()
 
-    override fun isEnabled(position: Int): Boolean = items[position] is MainMenuItem.Action
+    override fun isEnabled(position: Int): Boolean = items[position] !is MainMenuItem.Divider
 
     override fun getView(
       position: Int,
@@ -268,7 +329,11 @@ class MainActivity : AppCompatActivity() {
           view
         }
 
-        MainMenuItem.Divider ->
+        is MainMenuItem.QuickActions -> {
+          createQuickActionRow(item.actions, parent)
+        }
+
+        MainMenuItem.Divider -> {
           View(parent.context).apply {
             setBackgroundColor(
               androidx.core.content.ContextCompat
@@ -280,17 +345,82 @@ class MainActivity : AppCompatActivity() {
                 parent.resources.getDimensionPixelSize(R.dimen.main_long_press_menu_divider_height),
               )
           }
+        }
+      }
+
+    private fun createQuickActionRow(
+      actions: List<MainMenuAction>,
+      parent: ViewGroup,
+    ): LinearLayout =
+      LinearLayout(parent.context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        layoutParams =
+          ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            parent.resources.getDimensionPixelSize(R.dimen.icon_menu_item_height),
+          )
+        actions.forEach { action ->
+          addView(
+            createQuickActionButton(action),
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f),
+          )
+        }
+      }
+
+    private fun createQuickActionButton(action: MainMenuAction): ImageButton =
+      ImageButton(this@MainActivity).apply {
+        val selectableItemBackground = android.util.TypedValue()
+        theme.resolveAttribute(android.R.attr.selectableItemBackground, selectableItemBackground, true)
+        setBackgroundResource(selectableItemBackground.resourceId)
+        setImageResource(action.iconRes)
+        scaleType = android.widget.ImageView.ScaleType.CENTER
+        val title = getString(action.titleRes)
+        contentDescription = title
+        TooltipCompat.setTooltipText(this, title)
+        isEnabled = action.isAvailable()
+        alpha = if (isEnabled) 1f else 0.38f
+        setOnClickListener { onActionClick(action) }
       }
   }
 
   private sealed interface MainMenuItem {
+    data class QuickActions(
+      val actions: List<MainMenuAction>,
+    ) : MainMenuItem
+
     data class Action(
       val iconRes: Int,
       val title: String,
+      val action: MainMenuAction,
     ) : MainMenuItem
 
     data object Divider : MainMenuItem
   }
+
+  private enum class MainMenuAction(
+    val iconRes: Int,
+    val titleRes: Int,
+  ) {
+    Back(R.drawable.ic_arrow_back_24, R.string.menu_back),
+    Forward(R.drawable.ic_arrow_forward_24, R.string.menu_forward),
+    Refresh(R.drawable.ic_refresh_24, R.string.menu_refresh),
+    Bookmarks(R.drawable.ic_star_24, R.string.menu_bookmarks),
+    StartPage(R.drawable.ic_home_24, R.string.menu_start_page),
+    Settings(R.drawable.ic_settings_24, R.string.menu_settings),
+  }
+
+  private fun MainMenuAction.isAvailable(): Boolean =
+    when (this) {
+      MainMenuAction.Back -> webView.canGoBack()
+
+      MainMenuAction.Forward -> webView.canGoForward()
+
+      MainMenuAction.Bookmarks,
+      MainMenuAction.Refresh,
+      MainMenuAction.StartPage,
+      MainMenuAction.Settings,
+      -> true
+    }
 
   private fun TextView.bindIconMenuItem(
     iconRes: Int,
