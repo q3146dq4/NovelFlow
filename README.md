@@ -547,7 +547,7 @@ NovelRegEx는 원본 프로젝트의 라이선스 조건에 따라 **GNU General
 
 https://github.com/TetraTheta/np-viewer
 
-NovelRegEx는 NP Viewer의 공식 버전이 아닌 독립적인 파생 프로젝트입니다.
+NovelRegEx는 NP Viewer의 공식 버전이 아닌 파생 프로젝트입니다.
 
 ---
 
