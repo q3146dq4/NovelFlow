@@ -78,11 +78,13 @@ NovelFlow는 [TetraTheta/np-viewer](https://github.com/TetraTheta/np-viewer)를 
 
 NovelFlow가 np-viewer와 다른 유일한 기능입니다.
 
-노벨피아에서 현재 보고 있는 회차의 본문을 Android의 TTS 엔진을 이용해 읽어줍니다.
+노벨피아 공식 앱과 달리 Google TTS에 종속되지 않습니다.
 
-노벨피아 공식 앱과 다르게, 구글 TTS의 사용이 강제되는 것이 아닌, Android 표준 `TextToSpeech` API를 사용하므로, 실제 음성 및 음질은 기기에 설치된 TTS 엔진과 음성 데이터에 따라 달라집니다.
+노벨피아 공식 앱은 TTS 기능이 Google TTS를 직접 사용하도록 되어 있어, Google TTS를 삭제하거나 사용할 수 없는 상태로 만들면 TTS가 동작하지 않으며, 시스템의 기본 TTS 엔진을 다른 엔진으로 변경하더라도 해당 엔진을 사용하지 않습니다.
 
-기본적으로 **한국어 TTS**를 사용합니다.
+반면 NovelFlow는 Android 표준 TextToSpeech API를 사용하여 기기에 설치된 TTS 엔진을 사용할 수 있습니다. 따라서 Google TTS 외에도 Android TextToSpeech API를 지원하는 다양한 TTS 엔진을 사용할 수 있습니다.
+
+기본적으로 한국어 TTS를 사용합니다.
 
 ## TTS 재생 기능
 
