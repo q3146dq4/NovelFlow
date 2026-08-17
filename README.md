@@ -46,7 +46,7 @@ NovelFlow는 [TetraTheta/np-viewer](https://github.com/TetraTheta/np-viewer)를 
 
 ## 🛡️ 광고 차단
 
-원본 NP Viewer의 광고 차단 필터 기능을 유지하면서 네트워크 필터와 CSS 기반 요소 숨김 기능을 제공합니다.
+원본 NP Viewer의 광고 차단 필터 기능을 그대로 가져와 네트워크 필터와 CSS 기반 요소 숨김 기능을 제공합니다.
 
 ### 필터 구독
 
