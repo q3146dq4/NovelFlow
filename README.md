@@ -76,7 +76,7 @@ NovelFlow는 [TetraTheta/np-viewer](https://github.com/TetraTheta/np-viewer)를 
 
 # 🔊 TTS
 
-NovelFlow의 가장 큰 추가 기능입니다.
+NovelFlow가 np-viewer와 다른 유일한 기능입니다.
 
 노벨피아에서 현재 보고 있는 회차의 본문을 Android의 TTS 엔진을 이용해 읽어줍니다.
 
