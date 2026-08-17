@@ -1,13 +1,13 @@
-# NovelFlow
+# NovelRegEx
 
-NovelFlow는 [TetraTheta/np-viewer](https://github.com/TetraTheta/np-viewer)를 기반으로 TTS 기능을 추가한 파생 프로젝트입니다.
+NovelRegEx는 [TetraTheta/np-viewer](https://github.com/TetraTheta/np-viewer)를 기반으로 TTS 기능을 추가한 파생 프로젝트입니다.
 
 원본 NP Viewer의 가벼운 WebView 기반 구조와 노벨피아 뷰어 기능을 유지하면서, 노벨피아 공식 앱의 Google TTS 종속 문제를 해결하고, Android 시스템에서 선택한 TTS 엔진을 사용할 수 있는 TTS 기능을 추가했습니다.
 
 또한 TTS를 실제 웹소설 감상에 사용할 수 있도록 TTS 전용 정규식 처리, 다음 회차 미리 로딩, 그리고 TTS로 재생 중인 문장 강조 표시, 정주행, 백그라운드 재생 등 공식 앱의 TTS에서 제공하는 기능과 유사한 기능을 함께 제공합니다.
 
 > [!Caution]
-> NovelFlow는 노벨피아의 공식 애플리케이션이 아니며, 노벨피아 및 운영 주체와 제휴·협력·공식적인 관계가 없는, 개인적인 필요를 위해 NP Viewer를 기반으로 TTS 기능을 추가한 비공식 프로젝트입니다. 유지보수 및 업데이트가 지속적으로 제공된다는 보장은 없습니다.
+> NovelRegEx는 노벨피아의 공식 애플리케이션이 아니며, 노벨피아 및 운영 주체와 제휴·협력·공식적인 관계가 없는, 개인적인 필요를 위해 NP Viewer를 기반으로 TTS 기능을 추가한 비공식 프로젝트입니다. 유지보수 및 업데이트가 지속적으로 제공된다는 보장은 없습니다.
 
 ## 주요 기능
 
@@ -78,13 +78,13 @@ NovelFlow는 [TetraTheta/np-viewer](https://github.com/TetraTheta/np-viewer)를 
 
 # 🔊 TTS
 
-NovelFlow가 np-viewer와 다른 유일한 기능입니다.
+NovelRegEx가 np-viewer와 다른 유일한 기능입니다.
 
 노벨피아 공식 앱과 달리 Google TTS에 종속되지 않습니다.
 
 노벨피아 공식 앱은 TTS 기능이 Google TTS를 직접 사용하도록 되어 있어, Google TTS를 삭제하거나 사용할 수 없는 상태로 만들면 TTS가 동작하지 않으며, 시스템의 기본 TTS 엔진을 다른 엔진으로 변경하더라도 해당 엔진을 사용하지 않습니다.
 
-반면 NovelFlow는 Android 표준 TextToSpeech API를 사용하여 기기에 설치된 TTS 엔진을 사용할 수 있습니다. 따라서 Google TTS 외에도 Android TextToSpeech API를 지원하는 다양한 TTS 엔진을 사용할 수 있습니다.
+반면 NovelRegEx는 Android 표준 TextToSpeech API를 사용하여 기기에 설치된 TTS 엔진을 사용할 수 있습니다. 따라서 Google TTS 외에도 Android TextToSpeech API를 지원하는 다양한 TTS 엔진을 사용할 수 있습니다.
 
 기본적으로 한국어 TTS를 사용합니다.
 
@@ -134,7 +134,7 @@ TTS가 문장을 읽기 시작하면 해당 문장이 WebView의 본문에서 �
 
 # 📝 TTS 텍스트 처리
 
-NovelFlow는 WebView에 표시되는 원문 자체를 수정하지 않습니다.
+NovelRegEx는 WebView에 표시되는 원문 자체를 수정하지 않습니다.
 
 TTS에 실제로 전달하는 문자열만 별도로 가공하여 한국어 TTS에서 어색하게 읽힐 가능성이 높은 표현을 보정합니다.
 
@@ -187,7 +187,7 @@ l
 
 # 🔧 TTS 정규식
 
-NovelFlow에는 별도의 **TTS 정규식 설정** 기능이 있습니다.
+NovelRegEx에는 별도의 **TTS 정규식 설정** 기능이 있습니다.
 
 웹소설의 특정 표현을 사용자가 원하는 발음이나 형태로 바꾸고 싶을 때 사용할 수 있습니다.
 
@@ -320,7 +320,7 @@ Android `MediaSession`과 연동되므로 지원되는 시스템 UI 및 외부 �
 
 # 💾 설정 백업
 
-NovelFlow는 앱 설정을 JSON 파일로 내보내고 다시 불러올 수 있습니다.
+NovelRegEx는 앱 설정을 JSON 파일로 내보내고 다시 불러올 수 있습니다.
 
 설정 백업에는 앱 설정뿐만 아니라 즐겨찾기 정보도 포함할 수 있습니다.
 
@@ -369,9 +369,9 @@ Web Storage 삭제는 Web SQL Database 및 HTML5 Web Storage 등을 포함합니
 
 # 🔗 노벨피아 링크 처리
 
-NovelFlow는 Android의 링크 처리 기능을 이용하여 노벨피아 링크를 앱에서 열 수 있도록 설정할 수 있습니다.
+NovelRegEx는 Android의 링크 처리 기능을 이용하여 노벨피아 링크를 앱에서 열 수 있도록 설정할 수 있습니다.
 
-설정에서 링크 처리 기능을 활성화하면 노벨피아 링크를 NovelFlow에서 직접 열도록 Android 시스템 설정으로 안내합니다.
+설정에서 링크 처리 기능을 활성화하면 노벨피아 링크를 NovelRegEx에서 직접 열도록 Android 시스템 설정으로 안내합니다.
 
 노벨피아 외의 링크는 일반적으로 시스템 브라우저 등 외부 앱에서 처리합니다.
 
@@ -408,7 +408,7 @@ TTS 플레이어가 활성화된 상태에서는 볼륨 크기 조절이 우선�
 
 # 🛠️ 빌드
 
-NovelFlow는 Android Studio 또는 Gradle Wrapper를 이용해 빌드할 수 있습니다.
+NovelRegEx는 Android Studio 또는 Gradle Wrapper를 이용해 빌드할 수 있습니다.
 
 ## 개발 환경
 
@@ -467,10 +467,10 @@ KEY_PASSWORD=
 app/src/main/
 ├── assets/
 │   ├── ad-filter.js
-│   ├── novelflow-tts.js
+│   ├── NovelRegEx-tts.js
 │   └── scroll-restore.js
 │
-├── java/com/novelflow/app/
+├── java/com/NovelRegEx/app/
 │   ├── activity/
 │   │   ├── MainActivity.kt
 │   │   ├── SettingsActivity.kt
@@ -495,7 +495,7 @@ TTS는 WebView의 JavaScript와 Android 네이티브 코드가 JavaScript Interf
 
 # 📌 원본 프로젝트
 
-NovelFlow는 다음 프로젝트를 기반으로 ChatGPT의 도움을 받아 개발되었습니다.
+NovelRegEx는 다음 프로젝트를 기반으로 ChatGPT의 도움을 받아 개발되었습니다.
 
 **NP Viewer**
 
@@ -503,14 +503,14 @@ https://github.com/TetraTheta/np-viewer
 
 원작자: **TetraTheta**
 
-NovelFlow는 원작자이신 TetraTheta님의 허락을 받아 NP Viewer를 포크하여 기능을 추가한 프로젝트입니다.
+NovelRegEx는 원작자이신 TetraTheta님의 허락을 받아 NP Viewer를 포크하여 기능을 추가한 프로젝트입니다.
 원본 프로젝트의 저작권 및 라이선스 정보를 유지하면서 별도의 프로젝트 이름, 패키지명 및 브랜딩을 사용하여 원본 **NP Viewer**와 명확하게 구분되도록 했습니다.
 
 ---
 
 # 🙏 원본 프로젝트에 대한 크레딧
 
-NovelFlow는 NP Viewer의 코드와 구조를 기반으로 하고 있습니다.
+NovelRegEx는 NP Viewer의 코드와 구조를 기반으로 하고 있습니다.
 
 원작자의 요청에 따라 다음 사항을 준수합니다.
 
@@ -518,7 +518,7 @@ NovelFlow는 NP Viewer의 코드와 구조를 기반으로 하고 있습니다.
 * **원본 프로젝트 및 원작자에 대한 크레딧 유지**
 * **GPLv3 라이선스 준수**
 
-NovelFlow에서 추가되거나 변경된 주요 기능은 다음과 같습니다.
+NovelRegEx에서 추가되거나 변경된 주요 기능은 다음과 같습니다.
 
 * TTS 재생
 * 현재 읽는 문장 강조 표시
@@ -531,7 +531,7 @@ NovelFlow에서 추가되거나 변경된 주요 기능은 다음과 같습니�
 * 백그라운드 TTS 재생
 * 미디어 알림 및 MediaSession 연동
 * 화면 꺼짐 상태의 TTS 재생 대응
-* 기타 NovelFlow 전용 UI 및 기능
+* 기타 NovelRegEx 전용 UI 및 기능
 
 ---
 ## Contributors
@@ -539,7 +539,7 @@ NovelFlow에서 추가되거나 변경된 주요 기능은 다음과 같습니�
   
 # 📄 라이선스
 
-NovelFlow는 원본 프로젝트의 라이선스 조건에 따라 **GNU General Public License v3.0 (GPLv3)**으로 배포됩니다.
+NovelRegEx는 원본 프로젝트의 라이선스 조건에 따라 **GNU General Public License v3.0 (GPLv3)**으로 배포됩니다.
 
 전체 라이선스 내용은 저장소의 [`LICENSE`](LICENSE) 파일을 확인하시기 바랍니다.
 
@@ -547,14 +547,14 @@ NovelFlow는 원본 프로젝트의 라이선스 조건에 따라 **GNU General 
 
 https://github.com/TetraTheta/np-viewer
 
-NovelFlow는 NP Viewer의 공식 버전이 아닌 독립적인 파생 프로젝트입니다.
+NovelRegEx는 NP Viewer의 공식 버전이 아닌 독립적인 파생 프로젝트입니다.
 
 ---
 
 # ⚠️ 면책
 
-NovelFlow는 노벨피아 콘텐츠를 표시하고 읽기 위한 비공식 서드파티 애플리케이션입니다.
+NovelRegEx는 노벨피아 콘텐츠를 표시하고 읽기 위한 비공식 서드파티 애플리케이션입니다.
 
-NovelFlow는 노벨피아 및 그 운영 주체와 공식적인 제휴 또는 협력 관계가 없습니다.
+NovelRegEx는 노벨피아 및 그 운영 주체와 공식적인 제휴 또는 협력 관계가 없습니다.
 
 앱 사용에 따른 노벨피아 이용약관 및 관련 법령 준수 책임은 사용자에게 있습니다.
