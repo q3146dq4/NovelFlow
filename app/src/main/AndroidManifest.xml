@@ -22,9 +22,9 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
-        android:icon="@drawable/NovelRegEx_icon_exact_v2"
+        android:icon="@drawable/novelregex_icon_exact_v2"
         android:label="@string/app_name"
-        android:roundIcon="@drawable/NovelRegEx_icon_exact_v2"
+        android:roundIcon="@drawable/novelregex_icon_exact_v2"
         android:supportsRtl="true"
         android:theme="@style/Theme.NovelRegEx">
 
