@@ -1377,16 +1377,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun advanceAfterChunk(chunk: TtsSpeechChunk) {
-      activeUtteranceId = null
-      activeChunk = null
+        activeUtteranceId = null
+        activeChunk = null
+        currentSentencePartIndex = 0
 
-      currentSentencePartIndex = 0
-      val continuationGeneration = ++generation
-      mainHandler.postDelayed({
-        if (active && !paused && generation == continuationGeneration) {
-          speakNext(queueMode = TextToSpeech.QUEUE_ADD)
-        }
-      }, 80L)
+        if (!active || paused) return
+
+        generation++
+        speakNext(queueMode = TextToSpeech.QUEUE_FLUSH)
     }
 
     override fun onStart(utteranceId: String) {
