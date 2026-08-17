@@ -36,12 +36,12 @@ val missingReleaseSigningEnvKeys =
   releaseSigningEnvKeys.filter { envVar(it).isNullOrBlank() }
 
 android {
-  namespace = "io.github.tetratheta.npviewer"
+  namespace = "com.novelflow.app"
   // compileSdk controls which Android API level the app is compiled against.
   // Raising it does not opt the app into new platform runtime behavior.
   compileSdk = 37
   defaultConfig {
-    applicationId = "io.github.tetratheta.npviewer"
+    applicationId = "com.novelflow.app"
     // minSdk is the oldest Android version this app supports.
     minSdk = 31
     // targetSdk opts the app into platform behavior changes up to this API level.
@@ -129,7 +129,7 @@ tasks.register<Copy>("buildReleaseApk") {
   val releaseApk = layout.buildDirectory.file("outputs/apk/release/app-release.apk")
   from(releaseApk)
   into(rootProject.layout.projectDirectory.dir("apk"))
-  rename { "NPViewer-$appVersionName.apk" }
+  rename { "NovelFlow-v$appVersionName-debug.apk" }
 
   doFirst {
     check(releaseApk.get().asFile.exists()) {

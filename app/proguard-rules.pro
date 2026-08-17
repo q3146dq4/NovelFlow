@@ -1,8 +1,8 @@
 # WebView JavaScript Interface
--keepclassmembers class io.github.tetratheta.npviewer.activity.MainActivity$ScrollRestoreInterface {
+-keepclassmembers class com.novelflow.app.activity.MainActivity$ScrollRestoreInterface {
   @android.webkit.JavascriptInterface <methods>;
 }
--keepclassmembers class io.github.tetratheta.npviewer.activity.MainActivity$FilterCssInterface {
+-keepclassmembers class com.novelflow.app.activity.MainActivity$FilterCssInterface {
   @android.webkit.JavascriptInterface <methods>;
 }
 # Preferences

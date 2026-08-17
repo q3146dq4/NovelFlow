@@ -1,5 +1,5 @@
 <resources>
-  <string name="app_name">NP Viewer</string>
+  <string name="app_name">NovelFlow</string>
   <string name="bookmark_title_hint">Title</string>
   <string name="bookmark_url_hint">URL</string>
   <string name="btn_allow">Allow</string>
@@ -11,7 +11,7 @@
   <string name="btn_overwrite">Overwrite</string>
   <string name="btn_reset">Reset</string>
   <string name="btn_skip">Skip</string>
-  <string name="dlg_notification_permission_message">NP Viewer requests notification permission to alert you when an update download is complete.  Without this permission, the \"Update ready\" notification will not appear on Android 13 and above. You can still install updates at any time by tapping \"Install Update\" in Settings.  If you tap Skip or Decline, you will not be asked again — to enable notifications later, go to the app\'s settings manually.</string>
+  <string name="dlg_notification_permission_message">NovelFlow requests notification permission to alert you when an update download is complete.  Without this permission, the \"Update ready\" notification will not appear on Android 13 and above. You can still install updates at any time by tapping \"Install Update\" in Settings.  If you tap Skip or Decline, you will not be asked again — to enable notifications later, go to the app\'s settings manually.</string>
   <string name="dlg_notification_permission_title">Allow Notifications</string>
   <string name="dlg_notification_settings_message">Notification permission has been permanently denied. \"Update ready\" notifications will not appear.  To re-enable, open the app\'s settings and grant the Notifications permission manually.  You can still install updates by tapping \"Install Update\" in Settings.</string>
   <string name="dlg_notification_settings_title">Notification Permission Required</string>
@@ -56,7 +56,7 @@
   <string name="noti_download_desc">Downloading version %1$s</string>
   <string name="noti_download_failed_text">Download failed — use Retry to try again</string>
   <string name="noti_download_failed_title">Download failed</string>
-  <string name="noti_download_title">Downloading NP Viewer update</string>
+  <string name="noti_download_title">Downloading NovelFlow update</string>
   <string name="noti_update_available_text">v%1$s is available</string>
   <string name="noti_update_available_title">Update available</string>
   <string name="noti_update_ready_text">Tap to install the new version</string>

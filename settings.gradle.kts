@@ -24,5 +24,5 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "NPViewer"
+rootProject.name = "NovelFlow"
 include(":app")

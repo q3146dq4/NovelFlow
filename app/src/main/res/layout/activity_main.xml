@@ -7,22 +7,233 @@
     android:layout_height="match_parent"
     tools:context=".activity.MainActivity">
 
-  <io.github.tetratheta.npviewer.layout.TopSwipeRefreshLayout
-      android:id="@+id/swipe_refresh"
-      android:layout_width="match_parent"
-      android:layout_height="match_parent">
-
-    <WebView
-        android:id="@+id/webview"
+    <com.novelflow.app.layout.TopSwipeRefreshLayout
+        android:id="@+id/swipe_refresh"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
-  </io.github.tetratheta.npviewer.layout.TopSwipeRefreshLayout>
+        android:layout_height="match_parent">
 
-  <com.google.android.material.progressindicator.LinearProgressIndicator
-      android:id="@+id/progress_bar"
-      style="@style/Widget.Material3.LinearProgressIndicator"
-      android:layout_width="match_parent"
-      android:layout_height="wrap_content"
-      android:layout_gravity="top"
-      app:trackCornerRadius="0dp" />
+        <WebView
+            android:id="@+id/webview"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+    </com.novelflow.app.layout.TopSwipeRefreshLayout>
+
+    <com.google.android.material.progressindicator.LinearProgressIndicator
+        android:id="@+id/progress_bar"
+        style="@style/Widget.Material3.LinearProgressIndicator"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        app:trackCornerRadius="0dp" />
+
+    <!--
+        ============================================================
+        TTS 오버레이
+        ============================================================
+
+        중요:
+        TTS 오버레이가 표시되어 있는 동안 화면 전체의 터치를
+        이 레이어가 먼저 받아서 아래 WebView로 전달되지 않게 한다.
+
+        따라서:
+        - 댓글
+        - 추천
+        - 다음화
+        - 이전화
+        - 기타 WebView 하단 메뉴
+
+        등을 눌러도 원래 웹페이지의 버튼이 작동하지 않는다.
+
+        단, 이 레이어 내부의 TTS 버튼들은 각각 clickable이므로
+        정상적으로 작동한다.
+    -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/tts_overlay_root"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone"
+        android:clickable="true"
+        android:focusable="true"
+        tools:visibility="visible">
+
+        <!-- ========================================================
+             TTS 상단 헤더
+             ======================================================== -->
+        <LinearLayout
+            android:id="@+id/tts_header"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:background="#5A28FF"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <TextView
+                android:id="@+id/tts_title_text"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:paddingStart="20dp"
+                android:paddingEnd="16dp"
+                android:singleLine="true"
+                android:textColor="#FFFFFF"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                tools:text="EP.0 프롤로그" />
+
+            <TextView
+                android:id="@+id/tts_close_button"
+                android:layout_width="56dp"
+                android:layout_height="match_parent"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:text="×"
+                android:textColor="#FFFFFF"
+                android:textSize="32sp" />
+
+        </LinearLayout>
+
+
+        <!-- ========================================================
+             TTS 하단 플레이어
+             ======================================================== -->
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/tts_player_bottom"
+            android:layout_width="match_parent"
+            android:layout_height="120dp"
+            android:background="#000000"
+            android:clickable="true"
+            android:focusable="true"
+            app:layout_constraintBottom_toBottomOf="parent">
+
+            <!-- ====================================================
+                 시커바
+                 ==================================================== -->
+            <FrameLayout
+                android:id="@+id/tts_progress_container"
+                android:layout_width="0dp"
+                android:layout_height="32dp"
+                android:layout_marginStart="20dp"
+                android:layout_marginTop="12dp"
+                android:layout_marginEnd="16dp"
+                app:layout_constraintEnd_toStartOf="@+id/tts_counter_text"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent" />
+
+            <!-- ====================================================
+                 현재 위치 표시
+                 ==================================================== -->
+            <TextView
+                android:id="@+id/tts_counter_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="20dp"
+                android:textColor="#999999"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                app:layout_constraintBottom_toBottomOf="@+id/tts_progress_container"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="@+id/tts_progress_container"
+                tools:text="14 / 74" />
+
+            <!-- ====================================================
+                 정주행 / 한 화
+                 ==================================================== -->
+            <TextView
+                android:id="@+id/tts_mode_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:layout_marginBottom="16dp"
+                android:background="?attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:padding="8dp"
+                android:text="정주행"
+                android:textColor="#999999"
+                android:textSize="14sp"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintStart_toStartOf="parent" />
+
+            <!-- ====================================================
+                 배속
+                 ==================================================== -->
+            <TextView
+                android:id="@+id/tts_speed_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="16dp"
+                android:layout_marginBottom="16dp"
+                android:background="?attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:padding="8dp"
+                android:text="1.0x ⌄"
+                android:textColor="#999999"
+                android:textSize="14sp"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent" />
+
+            <!-- ====================================================
+                 가운데 재생 컨트롤
+                 ==================================================== -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:orientation="horizontal"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toStartOf="@+id/tts_speed_text"
+                app:layout_constraintStart_toEndOf="@+id/tts_mode_text"
+                app:layout_constraintTop_toBottomOf="@+id/tts_progress_container">
+
+                <!-- 이전 문장 -->
+                <TextView
+                    android:id="@+id/tts_previous_button"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center"
+                    android:text="⏮"
+                    android:textColor="#FFFFFF"
+                    android:textSize="20sp" />
+
+                <!-- 재생 / 일시정지 -->
+                <TextView
+                    android:id="@+id/tts_play_pause_button"
+                    android:layout_width="64dp"
+                    android:layout_height="64dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center"
+                    android:text="▶"
+                    android:textColor="#FFFFFF"
+                    android:textSize="32sp" />
+
+                <!-- 다음 문장 -->
+                <TextView
+                    android:id="@+id/tts_next_button"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center"
+                    android:text="⏭"
+                    android:textColor="#FFFFFF"
+                    android:textSize="20sp" />
+
+            </LinearLayout>
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
 </FrameLayout>
