@@ -109,7 +109,7 @@ object UpdateNotifier {
     val notification =
       NotificationCompat
         .Builder(context, CHANNEL_ID)
-        .setSmallIcon(R.mipmap.ic_launcher)
+        .setSmallIcon(R.drawable.ic_notification_novelflow)
         .setPriority(NotificationCompat.PRIORITY_HIGH)
         .apply(block)
         .build()

@@ -1459,7 +1459,7 @@ class MainActivity : AppCompatActivity() {
       val pendingContentIntent = PendingIntent.getActivity(this@MainActivity, 0, contentIntent, PendingIntent.FLAG_IMMUTABLE)
 
       val builder = Notification.Builder(this@MainActivity, channelId)
-          .setSmallIcon(R.drawable.ic_arrow_forward_24)
+          .setSmallIcon(R.drawable.ic_notification_novelflow)
           .setContentTitle(titleText?.text?.toString() ?: "노벨피아 TTS")
           .setContentText(if (isPlaying) "재생 중" else "일시정지")
            .setOngoing(true)
