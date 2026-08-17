@@ -535,7 +535,9 @@ NovelFlow에서 추가되거나 변경된 주요 기능은 다음과 같습니�
 * 기타 NovelFlow 전용 UI 및 기능
 
 ---
-
+## Contributors
+- [TetraTheta](https://github.com/TetraTheta) — 원본 [NP Viewer](https://github.com/TetraTheta/np-viewer) 개발
+  
 # 📄 라이선스
 
 NovelFlow는 원본 프로젝트의 라이선스 조건에 따라 **GNU General Public License v3.0 (GPLv3)**으로 배포됩니다.
