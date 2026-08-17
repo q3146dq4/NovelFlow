@@ -1,4 +1,4 @@
-# NovelRegEx
+# NovelRegEx — 정규식과 시스템 TTS를 지원하는 비공식 노벨피아 뷰어
 
 NovelRegEx는 [TetraTheta/np-viewer](https://github.com/TetraTheta/np-viewer)를 기반으로 정규식을 지원하는 TTS 기능을 추가한 파생 프로젝트입니다.
 
