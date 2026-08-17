@@ -1,6 +1,6 @@
 # NovelRegEx
 
-NovelRegEx는 [TetraTheta/np-viewer](https://github.com/TetraTheta/np-viewer)를 기반으로 TTS 기능을 추가한 파생 프로젝트입니다.
+NovelRegEx는 [TetraTheta/np-viewer](https://github.com/TetraTheta/np-viewer)를 기반으로 정규식을 지원하는 TTS 기능을 추가한 파생 프로젝트입니다.
 
 원본 NP Viewer의 가벼운 WebView 기반 구조와 노벨피아 뷰어 기능을 유지하면서, 노벨피아 공식 앱의 Google TTS 종속 문제를 해결하고, Android 시스템에서 선택한 TTS 엔진을 사용할 수 있는 TTS 기능을 추가했습니다.
 
