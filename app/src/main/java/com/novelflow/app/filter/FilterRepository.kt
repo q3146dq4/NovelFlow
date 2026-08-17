@@ -134,7 +134,7 @@ class FilterRepository(
         connectTimeout = 15_000
         readTimeout = 30_000
         requestMethod = "GET"
-        setRequestProperty("User-Agent", "NPViewer Filter Updater")
+        setRequestProperty("User-Agent", "NovelFlow Filter Updater")
       }
     connection.connect()
     if (connection.responseCode !in 200..299) {

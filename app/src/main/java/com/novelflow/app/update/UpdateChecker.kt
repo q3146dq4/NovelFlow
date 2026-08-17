@@ -28,13 +28,13 @@ object UpdateChecker {
   const val KEY_DOWNLOAD_ID = "download_id"
   const val KEY_PENDING_URL = "pending_download_url"
 
-  private const val API_URL = "https://api.github.com/repos/TetraTheta/np-viewer/releases/latest"
+  private const val API_URL = "https://api.github.com/repos/q3146dq4/NovelFlow/releases/latest"
   private const val CACHE_TTL_MS = 3_600_000L // 1시간
   private const val KEY_CACHE_URL = "cache_download_url"
   private const val KEY_CACHE_VERSION = "cache_version"
   private const val KEY_CACHE_TIMESTAMP = "cache_timestamp"
   private const val KEY_LAST_VERSION = "last_known_version_name"
-  private const val PREFS_NAME = "update_prefs"
+  private const val PREFS_NAME = "novelflow_update_prefs"
 
   fun prefs(context: Context): SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
