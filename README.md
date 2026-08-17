@@ -501,9 +501,7 @@ NovelFlow는 다음 프로젝트를 기반으로 ChatGPT의 도움을 받아 개
 
 https://github.com/TetraTheta/np-viewer
 
-원작자:
-
-**TetraTheta**
+원작자: **TetraTheta**
 
 NovelFlow는 원작자이신 TetraTheta님의 허락을 받아 NP Viewer를 포크하여 기능을 추가한 프로젝트입니다.
 원본 프로젝트의 저작권 및 라이선스 정보를 유지하면서 별도의 프로젝트 이름, 패키지명 및 브랜딩을 사용하여 원본 **NP Viewer**와 명확하게 구분되도록 했습니다.
