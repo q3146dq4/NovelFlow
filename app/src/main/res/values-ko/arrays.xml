@@ -16,4 +16,9 @@
     <item>up_prev</item>
     <item>up_next</item>
   </string-array>
+  <string-array name="tts_chunk_mode_entries">
+    <item>쉼표 (,)</item>
+    <item>마침표 (.)</item>
+    <item>문단</item>
+  </string-array>
 </resources>

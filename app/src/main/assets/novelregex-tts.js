@@ -19,6 +19,7 @@
     // 마지막으로 TTS가 가리킨 문장/줄
     lastSentenceIndex: -1,
     lastLineIndex: -1,
+    lastChunk: null,
 
     listenHookInstalled: false,
     observer: null,
@@ -195,6 +196,84 @@
     return result;
   }
 
+  function splitAtCommas(text) {
+    const result = [];
+
+    if (!text) return result;
+
+    let start = 0;
+
+    for (let index = 0; index < text.length; index++) {
+      const character = text[index];
+      const isComma =
+        character === "," ||
+        character === "，" ||
+        character === "、";
+      const isNumberSeparator =
+        character === "," &&
+        index > 0 &&
+        index + 1 < text.length &&
+        /[0-9]/.test(text[index - 1]) &&
+        /[0-9]/.test(text[index + 1]);
+
+      if (!isComma || isNumberSeparator) continue;
+
+      let partStart = start;
+      let partEnd = index + 1;
+
+      while (
+        partStart < partEnd &&
+        /\s/.test(text[partStart])
+      ) {
+        partStart++;
+      }
+
+      while (
+        partEnd > partStart &&
+        /\s/.test(text[partEnd - 1])
+      ) {
+        partEnd--;
+      }
+
+      if (partStart < partEnd) {
+        result.push({
+          text: text.substring(partStart, partEnd),
+          start: partStart,
+          end: partEnd,
+        });
+      }
+
+      start = index + 1;
+    }
+
+    let partStart = start;
+    let partEnd = text.length;
+
+    while (
+      partStart < partEnd &&
+      /\s/.test(text[partStart])
+    ) {
+      partStart++;
+    }
+
+    while (
+      partEnd > partStart &&
+      /\s/.test(text[partEnd - 1])
+    ) {
+      partEnd--;
+    }
+
+    if (partStart < partEnd) {
+      result.push({
+        text: text.substring(partStart, partEnd),
+        start: partStart,
+        end: partEnd,
+      });
+    }
+
+    return result;
+  }
+
   function normalizePronunciation(text) {
     let res = text;
 
@@ -312,6 +391,9 @@
           text: "삽화가 있습니다.",
           start: null,
           end: null,
+          sourceText: "",
+          rawStart: null,
+          rawEnd: null,
         });
 
         return;
@@ -341,6 +423,9 @@
           text,
           start: startBoundary,
           end: endBoundary,
+          sourceText: part.text,
+          rawStart: part.start,
+          rawEnd: part.end,
         });
       }
     });
@@ -478,6 +563,7 @@
      * 이 번호를 기준으로 새 DOM에서 다시 highlight한다.
      */
     state.lastSentenceIndex = index;
+    state.lastChunk = null;
 
     installHighlightStyle();
 
@@ -554,6 +640,129 @@
       item.line,
       false
     );
+  }
+
+  function addFallbackHighlight(
+    startLine,
+    endLine
+  ) {
+    for (
+      let lineIndex = startLine;
+      lineIndex <= endLine;
+      lineIndex++
+    ) {
+      state.lines[lineIndex]?.element?.classList.add(
+        "npviewer-tts-line-fallback"
+      );
+    }
+  }
+
+  function highlightChunk(
+    startSentenceIndex,
+    endSentenceIndexExclusive,
+    commaPartIndex = -1
+  ) {
+    const safeStart = Number(startSentenceIndex);
+    const safeEnd = Number(endSentenceIndexExclusive);
+    const safeCommaPart = Number(commaPartIndex);
+
+    if (
+      !Number.isInteger(safeStart) ||
+      !Number.isInteger(safeEnd) ||
+      safeStart < 0 ||
+      safeStart >= state.sentences.length
+    ) {
+      return false;
+    }
+
+    const endExclusive = Math.max(
+      safeStart + 1,
+      Math.min(safeEnd, state.sentences.length)
+    );
+    const first = state.sentences[safeStart];
+    const last = state.sentences[endExclusive - 1];
+
+    if (!first || !last) return false;
+
+    let startBoundary = first.start;
+    let endBoundary = last.end;
+
+    if (
+      Number.isInteger(safeCommaPart) &&
+      safeCommaPart >= 0 &&
+      endExclusive === safeStart + 1 &&
+      first.rawStart != null
+    ) {
+      const commaParts = splitAtCommas(
+        first.sourceText || first.text
+      );
+      const commaPart = commaParts[safeCommaPart];
+      const nodes = state.lines[first.line]?.nodes;
+
+      if (commaPart && nodes) {
+        startBoundary = boundaryAt(
+          nodes,
+          first.rawStart + commaPart.start
+        );
+        endBoundary = boundaryAt(
+          nodes,
+          first.rawStart + commaPart.end
+        );
+      }
+    }
+
+    state.lastSentenceIndex = safeStart;
+    state.lastChunk = {
+      start: safeStart,
+      end: endExclusive,
+      commaPart: safeCommaPart,
+    };
+
+    installHighlightStyle();
+    clearHighlight();
+
+    if (
+      !startBoundary?.node ||
+      !endBoundary?.node
+    ) {
+      addFallbackHighlight(
+        first.line,
+        last.line
+      );
+      scrollToLine(first.line, true);
+      return true;
+    }
+
+    if (supportsCssHighlight()) {
+      try {
+        const range = document.createRange();
+        range.setStart(
+          startBoundary.node,
+          startBoundary.offset
+        );
+        range.setEnd(
+          endBoundary.node,
+          endBoundary.offset
+        );
+        CSS.highlights.set(
+          state.highlightName,
+          new Highlight(range)
+        );
+      } catch (_) {
+        addFallbackHighlight(
+          first.line,
+          last.line
+        );
+      }
+    } else {
+      addFallbackHighlight(
+        first.line,
+        last.line
+      );
+    }
+
+    scrollToLine(first.line, false);
+    return true;
   }
 
   // ---------------------------------------------------------
@@ -685,6 +894,10 @@
     const savedSentenceIndex =
       state.lastSentenceIndex;
 
+    const savedChunk = state.lastChunk
+      ? { ...state.lastChunk }
+      : null;
+
     const savedLineIndex =
       state.lastLineIndex;
 
@@ -706,6 +919,17 @@
        * 다시 highlight한다.
        */
       if (
+        savedChunk &&
+        savedChunk.start >= 0 &&
+        savedChunk.start <
+          state.sentences.length
+      ) {
+        highlightChunk(
+          savedChunk.start,
+          savedChunk.end,
+          savedChunk.commaPart
+        );
+      } else if (
         savedSentenceIndex >= 0 &&
         savedSentenceIndex <
           state.sentences.length
@@ -885,6 +1109,12 @@
      * 특정 문장을 highlight한다.
      */
     highlight,
+
+    /*
+     * 실제로 하나의 TTS 요청으로 전달된
+     * 쉼표/문장/문단 청크 전체를 highlight한다.
+     */
+    highlightChunk,
 
     /*
      * 재생하지 않고 특정 문장 위치만 선택한다.

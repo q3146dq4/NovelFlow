@@ -40,4 +40,14 @@
     <item>0.45</item>
     <item>0.50</item>
   </string-array>
+  <string-array name="tts_chunk_mode_entries">
+    <item>Comma (,)</item>
+    <item>Period (.)</item>
+    <item>Paragraph</item>
+  </string-array>
+  <string-array name="tts_chunk_mode_values">
+    <item>comma</item>
+    <item>sentence</item>
+    <item>paragraph</item>
+  </string-array>
 </resources>

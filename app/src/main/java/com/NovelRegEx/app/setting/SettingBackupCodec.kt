@@ -5,6 +5,7 @@ import androidx.preference.PreferenceManager
 import com.NovelRegEx.app.bookmark.BookmarkItem
 import com.NovelRegEx.app.bookmark.BookmarkRepository
 import com.NovelRegEx.app.filter.FilterPreferences
+import com.NovelRegEx.app.tts.TtsPreferences
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -85,6 +86,7 @@ object SettingBackupCodec {
       volumeBehavior = validOrDefault(prefs.getString("volume_behavior", "move_page"), volumeBehaviors, "move_page"),
       volumeDirection = validOrDefault(prefs.getString("volume_direction", "up_prev"), volumeDirections, "up_prev"),
       swipeFraction = validOrDefault(prefs.getString("swipe_fraction", "0.15"), swipeFractions, "0.15"),
+      ttsChunkMode = TtsPreferences.getChunkMode(context),
       filtersEnabled = prefs.getBoolean(FilterPreferences.KEY_ENABLED, true),
       filtersAutoUpdate = prefs.getBoolean(FilterPreferences.KEY_AUTO_UPDATE, true),
       filterSubscriptions = FilterPreferences.getSubscriptionUrls(context),
@@ -99,6 +101,11 @@ object SettingBackupCodec {
       volumeBehavior = json.requireString("volumeBehavior", volumeBehaviors),
       volumeDirection = json.requireString("volumeDirection", volumeDirections),
       swipeFraction = json.requireString("swipeFraction", swipeFractions),
+      ttsChunkMode =
+        json
+          .optString("ttsChunkMode", TtsPreferences.DEFAULT_CHUNK_MODE)
+          .takeIf { it in TtsPreferences.chunkModes }
+          ?: TtsPreferences.DEFAULT_CHUNK_MODE,
       filtersEnabled = json.getBoolean("filtersEnabled"),
       filtersAutoUpdate = json.getBoolean("filtersAutoUpdate"),
       filterSubscriptions = parseStringArray(json.getJSONArray("filterSubscriptions")),
@@ -123,6 +130,7 @@ object SettingBackupCodec {
       .put("volumeBehavior", volumeBehavior)
       .put("volumeDirection", volumeDirection)
       .put("swipeFraction", swipeFraction)
+      .put("ttsChunkMode", ttsChunkMode)
       .put("filtersEnabled", filtersEnabled)
       .put("filtersAutoUpdate", filtersAutoUpdate)
       .put("filterSubscriptions", filterSubscriptions.toJsonArray())
@@ -188,6 +196,7 @@ data class BackupSettings(
   val volumeBehavior: String,
   val volumeDirection: String,
   val swipeFraction: String,
+  val ttsChunkMode: String,
   val filtersEnabled: Boolean,
   val filtersAutoUpdate: Boolean,
   val filterSubscriptions: List<String>,

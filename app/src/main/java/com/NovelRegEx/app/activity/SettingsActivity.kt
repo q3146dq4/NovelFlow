@@ -35,6 +35,7 @@ import com.NovelRegEx.app.filter.FilterRuntime
 import com.NovelRegEx.app.setting.BackupSettings
 import com.NovelRegEx.app.setting.SettingBackup
 import com.NovelRegEx.app.setting.SettingBackupCodec
+import com.NovelRegEx.app.tts.TtsPreferences
 import com.NovelRegEx.app.update.UpdateChecker
 import com.NovelRegEx.app.update.UpdateInfo
 import com.NovelRegEx.app.update.UpdateResult
@@ -567,6 +568,7 @@ class SettingsActivity : AppCompatActivity() {
         putString("volume_behavior", settings.volumeBehavior)
         putString("volume_direction", settings.volumeDirection)
         putString("swipe_fraction", settings.swipeFraction)
+        putString(TtsPreferences.KEY_CHUNK_MODE, settings.ttsChunkMode)
         putBoolean(FilterPreferences.KEY_ENABLED, settings.filtersEnabled)
         putBoolean(FilterPreferences.KEY_AUTO_UPDATE, settings.filtersAutoUpdate)
         putBoolean("auto_check_update", settings.autoCheckUpdate)
@@ -592,6 +594,7 @@ class SettingsActivity : AppCompatActivity() {
         "volume_behavior" to "move_page",
         "volume_direction" to "up_prev",
         "swipe_fraction" to "0.15",
+        TtsPreferences.KEY_CHUNK_MODE to TtsPreferences.DEFAULT_CHUNK_MODE,
       ).forEach { (key, defaultValue) ->
         findPreference<ListPreference>(key)?.value = prefs.getString(key, defaultValue)
       }

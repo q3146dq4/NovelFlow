@@ -1,21 +1,25 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 set "ROOT=%~dp0"
-set "BUILD_DRIVE=Z:"
 cd /d "%ROOT%"
-subst %BUILD_DRIVE% >nul 2>&1
-if not errorlevel 1 subst %BUILD_DRIVE% /d >nul 2>&1
-subst %BUILD_DRIVE% "%ROOT%"
-if errorlevel 1 (
-  echo [ERROR] Could not map %BUILD_DRIVE% to the project directory.
-  pause
-  exit /b 1
+set "BUILD_DRIVE="
+for %%D in (Z: Y: X: W: V: U:) do (
+  if not defined BUILD_DRIVE if not exist "%%D\" (
+    subst %%D "%ROOT:~0,-1%" >nul 2>&1
+    if not errorlevel 1 set "BUILD_DRIVE=%%D"
+  )
 )
-cd /d "%BUILD_DRIVE%\"
+if defined BUILD_DRIVE (
+  echo Using temporary build drive !BUILD_DRIVE!
+  cd /d "!BUILD_DRIVE!\"
+) else (
+  echo [WARN] No free SUBST drive letter. Building from the original path.
+  cd /d "%ROOT%"
+)
 if not defined ANDROID_HOME if exist "%LOCALAPPDATA%\Android\Sdk" set "ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk"
 if not defined ANDROID_HOME (
   echo [ERROR] Android SDK not found.
-  subst %BUILD_DRIVE% /d >nul 2>&1
+  call :cleanup_drive
   pause
   exit /b 1
 )
@@ -45,12 +49,17 @@ if errorlevel 1 goto fail
 echo.
 echo BUILD SUCCESSFUL
 echo APK: %ROOT%NovelRegEx-v0.1-debug.apk
-subst %BUILD_DRIVE% /d >nul 2>&1
+call :cleanup_drive
 pause
 exit /b 0
 :fail
 echo.
 echo [ERROR] Build failed.
-subst %BUILD_DRIVE% /d >nul 2>&1
+call :cleanup_drive
 pause
 exit /b 1
+
+:cleanup_drive
+cd /d "%ROOT%" >nul 2>&1
+if defined BUILD_DRIVE subst %BUILD_DRIVE% /d >nul 2>&1
+exit /b 0

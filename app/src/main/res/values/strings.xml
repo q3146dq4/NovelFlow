@@ -66,6 +66,7 @@
   <string name="pref_category_setting_backup">Settings Backup</string>
   <string name="pref_category_start_page">Start Page</string>
   <string name="pref_category_system">System Configuration</string>
+  <string name="pref_category_tts">TTS</string>
   <string name="pref_category_update">Update</string>
   <string name="pref_category_viewer">Viewer</string>
   <string name="pref_desc_apk_downloaded">v%1$s downloaded ― tap to install</string>
@@ -88,6 +89,7 @@
   <string name="pref_desc_open_link_settings_disabled">Tap to open system settings and enable this app to handle Novelpia links under \"Open by default\"</string>
   <string name="pref_desc_open_link_settings_enabled">Novelpia links are already configured to open in this app</string>
   <string name="pref_desc_swipe_fraction">Area from the top of the screen that triggers pull-to-refresh</string>
+  <string name="pref_desc_tts_chunk_mode">Choose where TTS requests are split. Seeking, Previous, and Next remain sentence-based.</string>
   <string name="pref_desc_update_downloading">Downloading…</string>
   <string name="pref_key_auto_check_update">Automatic Update Check</string>
   <string name="pref_key_check_update">Check for Updates</string>
@@ -107,6 +109,7 @@
   <string name="pref_key_open_link_settings">Enable Link Handling</string>
   <string name="pref_key_start_page">Start Page</string>
   <string name="pref_key_swipe_fraction">Pull-to-Refresh Zone</string>
+  <string name="pref_key_tts_chunk_mode">Split TTS Content At</string>
   <string name="pref_key_volume_behavior">Volume Key Behavior</string>
   <string name="pref_key_volume_direction">Volume Key Direction</string>
   <string name="press_twice_to_exit">Press Back again to exit</string>

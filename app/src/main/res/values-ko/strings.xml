@@ -67,6 +67,7 @@
   <string name="pref_category_setting_backup">설정 백업</string>
   <string name="pref_category_start_page">시작 페이지</string>
   <string name="pref_category_system">시스템 설정</string>
+  <string name="pref_category_tts">TTS</string>
   <string name="pref_category_update">업데이트</string>
   <string name="pref_category_viewer">뷰어</string>
   <string name="pref_desc_apk_downloaded">v%1$s 다운로드됨 ― 탭하여 설치</string>
@@ -89,6 +90,7 @@
   <string name="pref_desc_open_link_settings_disabled">탭하여 시스템 설정을 열고 \"기본으로 열기\" 항목에서 노벨피아 링크를 이 앱으로 처리하도록 설정하세요</string>
   <string name="pref_desc_open_link_settings_enabled">노벨피아 링크가 이미 이 앱에서 열리도록 설정되어 있습니다</string>
   <string name="pref_desc_swipe_fraction">당겨서 새로고침이 동작하는 화면 상단 영역</string>
+  <string name="pref_desc_tts_chunk_mode">TTS 요청을 나눌 기준입니다. 탐색·이전·다음은 문장 단위를 유지합니다.</string>
   <string name="pref_desc_update_downloading">다운로드 중…</string>
   <string name="pref_key_auto_check_update">자동 업데이트 확인</string>
   <string name="pref_key_check_update">업데이트 확인</string>
@@ -108,6 +110,7 @@
   <string name="pref_key_open_link_settings">링크 처리 활성화</string>
   <string name="pref_key_start_page">시작 페이지</string>
   <string name="pref_key_swipe_fraction">당겨서 새로고침 영역</string>
+  <string name="pref_key_tts_chunk_mode">TTS 내용 자르기</string>
   <string name="pref_key_volume_behavior">뷰어 볼륨 키 동작</string>
   <string name="pref_key_volume_direction">뷰어 볼륨 키 방향</string>
   <string name="press_twice_to_exit">\'뒤로\' 버튼을 한 번 더 누르시면 종료됩니다.</string>

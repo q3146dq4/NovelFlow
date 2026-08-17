@@ -57,9 +57,10 @@ import com.NovelRegEx.app.R
 import com.NovelRegEx.app.filter.FilterPreferences
 import com.NovelRegEx.app.filter.FilterRuntime
 import com.NovelRegEx.app.layout.TopSwipeRefreshLayout
+import com.NovelRegEx.app.tts.TtsPreferences
+import com.NovelRegEx.app.tts.TtsRegexStore
 import com.NovelRegEx.app.update.UpdateChecker
 import com.NovelRegEx.app.update.UpdateNotifier
-import com.NovelRegEx.app.tts.TtsRegexStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -119,6 +120,20 @@ class MainActivity : AppCompatActivity() {
   }
 
   private data class TtsSentence(val line: Int, val text: String)
+
+  private data class TtsChunkPart(
+    val sentenceIndex: Int,
+    val start: Int,
+    val endExclusive: Int,
+  )
+
+  private data class TtsSpeechChunk(
+    val text: String,
+    val startSentenceIndex: Int,
+    val endSentenceIndexExclusive: Int,
+    val parts: List<TtsChunkPart>,
+    val commaPartIndex: Int? = null,
+  )
 
   inner class ScrollRestoreInterface {
     @Suppress("unused")
@@ -657,8 +672,9 @@ class MainActivity : AppCompatActivity() {
     private var startPending = false
     
     private val sentences = mutableListOf<TtsSentence>()
-    private var totalLines = 0
+    private val playbackChunks = mutableListOf<TtsSpeechChunk>()
     private var currentSentenceIndex = -1
+    private var currentChunkIndex = -1
     private var active = false
     private var paused = false
     private var speed = 1.0f
@@ -666,6 +682,11 @@ class MainActivity : AppCompatActivity() {
     private var waitingForNextChapter = false
     private var generation = 0
     private var retryCount = 0
+    private var activeUtteranceId: String? = null
+    private var activeChunk: TtsSpeechChunk? = null
+    private var currentSentencePartIndex = 0
+    private var failedChunkKey: String? = null
+    private var failedChunkRetryCount = 0
 
     private var overlayRoot: View? = null
     private var titleText: TextView? = null
@@ -874,7 +895,6 @@ class MainActivity : AppCompatActivity() {
           if (episode.isNotEmpty() && title.isNotEmpty()) append(' ')
           if (title.isNotEmpty()) append(title)
         }.ifBlank { webView.title.orEmpty() }
-        totalLines = root.optInt("lineCount", 0)
         sentences.clear()
         val list = root.optJSONArray("sentences") ?: JSONArray()
         for (index in 0 until list.length()) {
@@ -883,7 +903,11 @@ class MainActivity : AppCompatActivity() {
           if (text.isNotEmpty()) sentences.add(TtsSentence(line = item.optInt("line", 0), text = text))
         }
         if (sentences.isEmpty()) return
+        rebuildPlaybackChunks()
+        if (playbackChunks.isEmpty()) return
         currentSentenceIndex = -1
+        currentChunkIndex = -1
+        currentSentencePartIndex = 0
         active = true
         paused = false
         waitingForNextChapter = false
@@ -943,7 +967,6 @@ class MainActivity : AppCompatActivity() {
               if (title.isNotEmpty()) append(title)
             }.ifBlank { webView.title.orEmpty() }
 
-            totalLines = root.optInt("lineCount", 0)
             sentences.clear()
             val list = root.optJSONArray("sentences") ?: JSONArray()
             for (index in 0 until list.length()) {
@@ -966,7 +989,15 @@ class MainActivity : AppCompatActivity() {
               return@post
             }
 
+            rebuildPlaybackChunks()
+            if (playbackChunks.isEmpty()) {
+              Toast.makeText(this@MainActivity, "읽을 수 있는 TTS 청크를 만들지 못했습니다.", Toast.LENGTH_LONG).show()
+              return@post
+            }
+
             currentSentenceIndex = -1
+            currentChunkIndex = -1
+            currentSentencePartIndex = 0
             active = true
             paused = false
             if (forNextChapter) {
@@ -996,14 +1027,17 @@ class MainActivity : AppCompatActivity() {
       }
     }
 
-    fun speakNext() {
+    fun speakNext(queueMode: Int = TextToSpeech.QUEUE_FLUSH) {
       if (!active || paused) return
-      currentSentenceIndex++
-      if (currentSentenceIndex >= sentences.size) {
+      currentChunkIndex++
+      if (currentChunkIndex >= playbackChunks.size) {
         finishEpisode()
         return
       }
-      speakCurrent()
+      val chunk = playbackChunks[currentChunkIndex]
+      currentSentenceIndex = chunk.startSentenceIndex
+      currentSentencePartIndex = chunk.commaPartIndex ?: 0
+      speakCurrent(queueMode = queueMode)
     }
 
     /**
@@ -1092,58 +1126,302 @@ class MainActivity : AppCompatActivity() {
         .trim()
     }
 
-    private fun speakCurrent() {
-      if (!active || paused || currentSentenceIndex !in sentences.indices) return
-      syncPlaybackWakeLock()
-      val sentence = sentences[currentSentenceIndex]
-      val localGeneration = generation
-      val utteranceId = "np_tts_${localGeneration}_$currentSentenceIndex"
-      
-      mainHandler.post {
-        updateProgress(sentence.line)
-        highlightCurrentSentence()
+    private fun hasSpeakableContent(text: String): Boolean = Regex("[가-힣a-zA-Z0-9]").containsMatchIn(text)
+
+    private fun splitAtCommas(text: String): List<String> {
+      val result = mutableListOf<String>()
+      var start = 0
+
+      text.forEachIndexed { index, character ->
+        val isComma = character == ',' || character == '，' || character == '、'
+        val isNumberSeparator =
+          character == ',' &&
+            index > 0 &&
+            index + 1 < text.length &&
+            text[index - 1].isDigit() &&
+            text[index + 1].isDigit()
+
+        if (isComma && !isNumberSeparator) {
+          text.substring(start, index + 1).trim().takeIf { it.isNotEmpty() }?.let(result::add)
+          start = index + 1
+        }
       }
 
-      val cleanText = prepareTtsText(sentence.text)
+      text.substring(start).trim().takeIf { it.isNotEmpty() }?.let(result::add)
+      return result.ifEmpty { listOf(text) }
+    }
 
-      val hasLetters = Regex("[가-힣a-zA-Z0-9]").containsMatchIn(cleanText)
+    private fun buildCommaChunk(startSentenceIndex: Int, requestedPartIndex: Int): TtsSpeechChunk {
+      val commaParts = splitAtCommas(sentences[startSentenceIndex].text)
+      val partIndex = requestedPartIndex.coerceIn(0, commaParts.lastIndex)
+      val text = prepareTtsText(commaParts[partIndex])
 
-      // 숫자-only 문장(예: 3.)을 하드코딩으로 무조건 묵음 처리하지 않는다.
-      // 사용자가 TTS 정규식 설정에서 해당 문장을 빈 문자열로 치환한 경우에만 묵음 처리된다.
-      if (cleanText.isBlank() || !hasLetters) {
-          mainHandler.post { speakNext() }
-          return
+      return TtsSpeechChunk(
+        text = text,
+        startSentenceIndex = startSentenceIndex,
+        endSentenceIndexExclusive = startSentenceIndex + 1,
+        parts =
+          if (hasSpeakableContent(text)) {
+            listOf(TtsChunkPart(sentenceIndex = startSentenceIndex, start = 0, endExclusive = text.length))
+          } else {
+            emptyList()
+          },
+        commaPartIndex = partIndex,
+      )
+    }
+
+    private fun buildCombinedChunk(
+      startSentenceIndex: Int,
+      requestedEndSentenceIndexExclusive: Int,
+    ): TtsSpeechChunk {
+      val text = StringBuilder()
+      val parts = mutableListOf<TtsChunkPart>()
+      val maxInputLength = TextToSpeech.getMaxSpeechInputLength()
+      var endSentenceIndexExclusive = startSentenceIndex
+
+      for (sentenceIndex in startSentenceIndex until requestedEndSentenceIndexExclusive.coerceAtMost(sentences.size)) {
+        val prepared = prepareTtsText(sentences[sentenceIndex].text)
+
+        endSentenceIndexExclusive = sentenceIndex + 1
+        if (prepared.isBlank() || !hasSpeakableContent(prepared)) continue
+
+        val separatorLength = if (text.isEmpty()) 0 else 1
+        val candidateLength = text.length + separatorLength + prepared.length
+
+        // Android TTS 입력 한계를 넘지 않도록 설정한 문장 수보다 먼저 청크를 끝낸다.
+        // 단, 문장 하나 자체가 한계보다 긴 기존 콘텐츠는 임의로 잘라 읽지 않는다.
+        if (text.isNotEmpty() && candidateLength > maxInputLength) {
+          endSentenceIndexExclusive = sentenceIndex
+          break
+        }
+
+        if (separatorLength > 0) text.append(' ')
+        val partStart = text.length
+        text.append(prepared)
+        parts +=
+          TtsChunkPart(
+            sentenceIndex = sentenceIndex,
+            start = partStart,
+            endExclusive = text.length,
+          )
+      }
+
+      return TtsSpeechChunk(
+        text = text.toString(),
+        startSentenceIndex = parts.firstOrNull()?.sentenceIndex ?: startSentenceIndex,
+        endSentenceIndexExclusive = endSentenceIndexExclusive.coerceAtLeast(startSentenceIndex + 1),
+        parts = parts,
+      )
+    }
+
+    private fun buildSpeechChunk(
+      startSentenceIndex: Int,
+      mode: String = TtsPreferences.getChunkMode(this@MainActivity),
+    ): TtsSpeechChunk {
+      if (mode == TtsPreferences.CHUNK_MODE_COMMA) {
+        return buildCommaChunk(startSentenceIndex, currentSentencePartIndex)
+      }
+
+      val requestedEnd =
+        when (mode) {
+          TtsPreferences.CHUNK_MODE_SENTENCE -> startSentenceIndex + 1
+          TtsPreferences.CHUNK_MODE_PARAGRAPH -> {
+            val line = sentences[startSentenceIndex].line
+            var end = startSentenceIndex + 1
+            while (end < sentences.size && sentences[end].line == line) end++
+            end
+          }
+          else -> startSentenceIndex + 1
+        }
+
+      return buildCombinedChunk(startSentenceIndex, requestedEnd)
+    }
+
+    private fun rebuildPlaybackChunks() {
+      playbackChunks.clear()
+
+      when (TtsPreferences.getChunkMode(this@MainActivity)) {
+        TtsPreferences.CHUNK_MODE_COMMA -> {
+          sentences.indices.forEach { sentenceIndex ->
+            val commaParts = splitAtCommas(sentences[sentenceIndex].text)
+            commaParts.indices.forEach { partIndex ->
+              buildCommaChunk(sentenceIndex, partIndex)
+                .takeIf { it.text.isNotBlank() && it.parts.isNotEmpty() }
+                ?.let(playbackChunks::add)
+            }
+          }
+        }
+
+        TtsPreferences.CHUNK_MODE_PARAGRAPH -> {
+          var start = 0
+          while (start < sentences.size) {
+            val line = sentences[start].line
+            var lineEnd = start + 1
+            while (lineEnd < sentences.size && sentences[lineEnd].line == line) lineEnd++
+
+            var chunkStart = start
+            while (chunkStart < lineEnd) {
+              val chunk = buildCombinedChunk(chunkStart, lineEnd)
+              if (chunk.text.isNotBlank() && chunk.parts.isNotEmpty()) playbackChunks += chunk
+              val nextStart = chunk.endSentenceIndexExclusive.coerceAtLeast(chunkStart + 1)
+              chunkStart = nextStart
+            }
+            start = lineEnd
+          }
+        }
+
+        else -> {
+          sentences.indices.forEach { sentenceIndex ->
+            buildCombinedChunk(sentenceIndex, sentenceIndex + 1)
+              .takeIf { it.text.isNotBlank() && it.parts.isNotEmpty() }
+              ?.let(playbackChunks::add)
+          }
+        }
+      }
+    }
+
+    private fun speakCurrent(
+      modeOverride: String? = null,
+      queueMode: Int = TextToSpeech.QUEUE_FLUSH,
+    ) {
+      if (!active || paused || currentChunkIndex !in playbackChunks.indices) return
+      syncPlaybackWakeLock()
+      activeUtteranceId = null
+      activeChunk = null
+      val chunk = if (modeOverride == null) {
+        playbackChunks[currentChunkIndex]
+      } else {
+        buildSpeechChunk(currentSentenceIndex, modeOverride)
+      }
+
+      if (chunk.text.isBlank() || chunk.parts.isEmpty()) {
+        mainHandler.post { advanceAfterChunk(chunk) }
+        return
+      }
+
+      currentSentenceIndex = chunk.startSentenceIndex
+      val localGeneration = generation
+      val utteranceId = "np_tts_${localGeneration}_${chunk.startSentenceIndex}"
+      activeUtteranceId = utteranceId
+      activeChunk = chunk
+
+      mainHandler.post {
+        updateProgress(currentChunkIndex)
+        highlightCurrentChunk()
       }
 
       val params = Bundle().apply { putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId) }
       textToSpeech?.setSpeechRate(speed)
-      
-      val result = textToSpeech?.speak(cleanText, TextToSpeech.QUEUE_FLUSH, params, utteranceId) ?: TextToSpeech.ERROR
+
+      val result = textToSpeech?.speak(chunk.text, queueMode, params, utteranceId) ?: TextToSpeech.ERROR
       if (result == TextToSpeech.ERROR) {
-        mainHandler.post { 
-          Toast.makeText(this@MainActivity, "TTS 재생 요청에 실패했습니다.", Toast.LENGTH_SHORT).show()
-          speakNext() 
-        }
+        activeUtteranceId = null
+        activeChunk = null
+        mainHandler.post { handleChunkFailure(chunk) }
       }
+    }
+
+    private fun chunkFailureKey(chunk: TtsSpeechChunk): String =
+      "${chunk.startSentenceIndex}:${chunk.endSentenceIndexExclusive}:${chunk.commaPartIndex ?: -1}"
+
+    /**
+     * 짧은 쉼표 조각을 간헐적으로 거부하는 TTS 엔진이 있다. 실패한 조각을 그대로
+     * 건너뛰지 않고 두 번 재시도하며, 그래도 실패하면 해당 문장 전체로 재시도한다.
+     */
+    private fun handleChunkFailure(chunk: TtsSpeechChunk) {
+      if (!active || paused) return
+
+      val key = chunkFailureKey(chunk)
+      if (failedChunkKey != key) {
+        failedChunkKey = key
+        failedChunkRetryCount = 0
+      }
+
+      if (failedChunkRetryCount < 2) {
+        failedChunkRetryCount++
+        generation++
+        val retryGeneration = generation
+        currentSentenceIndex = chunk.startSentenceIndex
+        currentSentencePartIndex = chunk.commaPartIndex ?: 0
+        mainHandler.postDelayed({
+          if (active && !paused && generation == retryGeneration &&
+            currentSentenceIndex == chunk.startSentenceIndex
+          ) {
+            speakCurrent()
+          }
+        }, 120L)
+        return
+      }
+
+      failedChunkKey = null
+      failedChunkRetryCount = 0
+      generation++
+      currentSentenceIndex = chunk.startSentenceIndex
+      currentSentencePartIndex = 0
+
+      if (chunk.commaPartIndex == null && chunk.parts.size <= 1) {
+        Toast.makeText(this@MainActivity, "TTS 엔진이 이 문장을 재생하지 못했습니다.", Toast.LENGTH_SHORT).show()
+        advanceAfterChunk(chunk)
+        return
+      }
+
+      // 쉼표 조각 또는 큰 문단 청크가 계속 실패해도 원문을 건너뛰지는 않는다.
+      // 문장 하나로 낮춰 재생하므로 쉼표 모드에서는 앞부분이 드물게 중복될 수 있다.
+      if (chunk.commaPartIndex != null) {
+        val lastChunkOfSentence = playbackChunks.indexOfLast {
+          it.startSentenceIndex == chunk.startSentenceIndex
+        }
+        if (lastChunkOfSentence >= currentChunkIndex) currentChunkIndex = lastChunkOfSentence
+      }
+      speakCurrent(modeOverride = TtsPreferences.CHUNK_MODE_SENTENCE)
+    }
+
+    private fun advanceAfterChunk(chunk: TtsSpeechChunk) {
+      activeUtteranceId = null
+      activeChunk = null
+
+      currentSentencePartIndex = 0
+      val continuationGeneration = ++generation
+      mainHandler.postDelayed({
+        if (active && !paused && generation == continuationGeneration) {
+          speakNext(queueMode = TextToSpeech.QUEUE_ADD)
+        }
+      }, 80L)
     }
 
     override fun onStart(utteranceId: String) {
       val parsed = parseUtteranceId(utteranceId) ?: return
       if (parsed.first != generation) return
       mainHandler.post {
-        if (!active || paused || parsed.second !in sentences.indices) return@post
+        if (!active || paused || utteranceId != activeUtteranceId || parsed.second !in sentences.indices) return@post
         currentSentenceIndex = parsed.second
-        updateProgress(sentences[parsed.second].line)
-        highlightCurrentSentence()
+        updateProgress(currentChunkIndex)
+        highlightCurrentChunk()
       }
+    }
+
+    override fun onRangeStart(
+      utteranceId: String,
+      start: Int,
+      end: Int,
+      frame: Int,
+    ) {
+      val parsed = parseUtteranceId(utteranceId) ?: return
+      if (parsed.first != generation) return
+      activeChunk ?: return
+      if (utteranceId != activeUtteranceId) return
+      // 선택한 청크 안에서 rangeStart가 이동해도 탐색 위치와 강조는 청크 단위로 유지한다.
     }
 
     override fun onDone(utteranceId: String) {
       val parsed = parseUtteranceId(utteranceId) ?: return
       if (parsed.first != generation) return
       mainHandler.post {
-        if (!active || paused || parsed.second != currentSentenceIndex) return@post
-        speakNext()
+        if (!active || paused || utteranceId != activeUtteranceId) return@post
+        val completedChunk = activeChunk ?: return@post
+        failedChunkKey = null
+        failedChunkRetryCount = 0
+        advanceAfterChunk(completedChunk)
       }
     }
 
@@ -1154,8 +1432,12 @@ class MainActivity : AppCompatActivity() {
       val parsed = parseUtteranceId(utteranceId) ?: return
       if (parsed.first != generation) return
       mainHandler.post {
-        if (!active || paused) return@post
-        speakNext() 
+        if (!active || paused || utteranceId != activeUtteranceId) return@post
+        val failedChunk = activeChunk ?: return@post
+        activeUtteranceId = null
+        activeChunk = null
+
+        handleChunkFailure(failedChunk)
       }
     }
 
@@ -1167,16 +1449,30 @@ class MainActivity : AppCompatActivity() {
       return try { parts[2].toInt() to parts[3].toInt() } catch (_: NumberFormatException) { null }
     }
 
-    private fun highlightCurrentSentence() {
-      val index = currentSentenceIndex
-      if (index !in sentences.indices) return
-      webView.evaluateJavascript("window.__npTts&&window.__npTts.highlight($index)", null)
+    private fun highlightCurrentChunk() {
+      val chunk = activeChunk ?: return
+      val commaPartIndex = chunk.commaPartIndex ?: -1
+      webView.evaluateJavascript(
+        "window.__npTts&&window.__npTts.highlightChunk(${chunk.startSentenceIndex},${chunk.endSentenceIndexExclusive},$commaPartIndex)",
+        null,
+      )
     }
 
-    private fun updateProgress(lineIndex: Int) {
-      counterText?.text = if (totalLines > 0) "${lineIndex + 1} / $totalLines" else "0 / 0"
-      progressView?.progress = if (totalLines <= 1) 0f else lineIndex.toFloat().coerceIn(0f, (totalLines - 1).toFloat()) / (totalLines - 1)
-      webView.evaluateJavascript("window.__npTts&&window.__npTts.scrollToLine($lineIndex)", null)
+    private fun updateProgress(chunkIndex: Int) {
+      if (chunkIndex !in playbackChunks.indices) {
+        counterText?.text = "0 / 0"
+        progressView?.progress = 0f
+        return
+      }
+
+      val chunk = playbackChunks[chunkIndex]
+      counterText?.text = "${chunkIndex + 1} / ${playbackChunks.size}"
+      progressView?.progress =
+        if (playbackChunks.size <= 1) 0f else chunkIndex.toFloat() / playbackChunks.lastIndex
+      webView.evaluateJavascript(
+        "window.__npTts&&window.__npTts.scrollToLine(${sentences[chunk.startSentenceIndex].line})",
+        null,
+      )
     }
 
     private fun finishEpisode() {
@@ -1263,8 +1559,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun previous() {
-      if (sentences.isEmpty()) return
-      currentSentenceIndex = (currentSentenceIndex - 2).coerceAtLeast(-1)
+      if (playbackChunks.isEmpty()) return
+      currentChunkIndex = (currentChunkIndex - 2).coerceAtLeast(-1)
+      currentSentencePartIndex = 0
       generation++
       textToSpeech?.stop()
       active = true
@@ -1274,9 +1571,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun next() {
-      if (sentences.isEmpty()) return
+      if (playbackChunks.isEmpty()) return
+      currentSentencePartIndex = 0
       generation++
       textToSpeech?.stop()
+      active = true
+      paused = false
       syncPlaybackWakeLock()
       speakNext()
     }
@@ -1291,7 +1591,7 @@ class MainActivity : AppCompatActivity() {
           paused = false
           syncPlaybackWakeLock()
           generation++
-          if (currentSentenceIndex in sentences.indices) {
+          if (currentChunkIndex in playbackChunks.indices) {
             speakCurrent()
           } else {
             speakNext()
@@ -1307,7 +1607,7 @@ class MainActivity : AppCompatActivity() {
         active = true
         syncPlaybackWakeLock()
         generation++
-        if (currentSentenceIndex in sentences.indices) {
+        if (currentChunkIndex in playbackChunks.indices) {
           speakCurrent()
         } else {
           speakNext()
@@ -1379,11 +1679,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun seekByFraction(fraction: Float) {
-      if (sentences.isEmpty()) return
+      if (playbackChunks.isEmpty()) return
 
       val targetIndex = (
-        fraction.coerceIn(0f, 1f) * (sentences.size - 1)
-      ).roundToInt().coerceIn(0, sentences.lastIndex)
+        fraction.coerceIn(0f, 1f) * (playbackChunks.size - 1)
+      ).roundToInt().coerceIn(0, playbackChunks.lastIndex)
 
       // 탐색 전 재생 상태를 보존한다.
       val wasPlaying = active && !paused
@@ -1393,19 +1693,25 @@ class MainActivity : AppCompatActivity() {
 
       if (wasPlaying) {
         // 재생 중 탐색: 선택한 위치에서 즉시 계속 재생
-        currentSentenceIndex = targetIndex - 1
+        currentChunkIndex = targetIndex
+        val targetChunk = playbackChunks[targetIndex]
+        currentSentenceIndex = targetChunk.startSentenceIndex
+        currentSentencePartIndex = targetChunk.commaPartIndex ?: 0
         active = true
         paused = false
-        speakNext()
+        speakCurrent()
       } else {
         // 정지/일시정지 상태 탐색: 위치만 옮기고 자동 재생하지 않음
-        currentSentenceIndex = targetIndex
+        currentChunkIndex = targetIndex
+        val targetChunk = playbackChunks[targetIndex]
+        currentSentenceIndex = targetChunk.startSentenceIndex
+        currentSentencePartIndex = targetChunk.commaPartIndex ?: 0
         active = false
         paused = true
 
-        val sentence = sentences[targetIndex]
-        updateProgress(sentence.line)
-        highlightCurrentSentence()
+        updateProgress(targetIndex)
+        activeChunk = targetChunk
+        highlightCurrentChunk()
         updatePlayButton()
       }
     }
@@ -1517,6 +1823,9 @@ class MainActivity : AppCompatActivity() {
       startPending = false
       generation++
       textToSpeech?.stop()
+      activeUtteranceId = null
+      activeChunk = null
+      currentSentencePartIndex = 0
       webView.evaluateJavascript("window.__npTts&&window.__npTts.clearHighlight()", null)
       updatePlayButton()
       progressView?.progress = 0f
