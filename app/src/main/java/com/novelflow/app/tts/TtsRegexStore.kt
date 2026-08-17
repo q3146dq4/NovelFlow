@@ -1,4 +1,4 @@
-package com.novelflow.app.tts
+package com.NovelRegEx.app.tts
 
 import android.content.Context
 import androidx.preference.PreferenceManager

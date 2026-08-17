@@ -1,10 +1,10 @@
-package com.novelflow.app.setting
+package com.NovelRegEx.app.setting
 
 import android.content.Context
 import androidx.preference.PreferenceManager
-import com.novelflow.app.bookmark.BookmarkItem
-import com.novelflow.app.bookmark.BookmarkRepository
-import com.novelflow.app.filter.FilterPreferences
+import com.NovelRegEx.app.bookmark.BookmarkItem
+import com.NovelRegEx.app.bookmark.BookmarkRepository
+import com.NovelRegEx.app.filter.FilterPreferences
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID

@@ -1,4 +1,4 @@
-package com.novelflow.app.bookmark
+package com.NovelRegEx.app.bookmark
 
 data class BookmarkItem(
   val id: String,

@@ -1,4 +1,4 @@
-package com.novelflow.app.update
+package com.NovelRegEx.app.update
 
 data class UpdateInfo(
   val version: String,

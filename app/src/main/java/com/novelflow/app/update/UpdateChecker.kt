@@ -1,4 +1,4 @@
-package com.novelflow.app.update
+package com.NovelRegEx.app.update
 
 import android.app.DownloadManager
 import android.content.Context
@@ -7,7 +7,7 @@ import android.content.SharedPreferences
 import androidx.core.content.FileProvider
 import androidx.core.content.edit
 import androidx.core.net.toUri
-import com.novelflow.app.R
+import com.NovelRegEx.app.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -28,13 +28,13 @@ object UpdateChecker {
   const val KEY_DOWNLOAD_ID = "download_id"
   const val KEY_PENDING_URL = "pending_download_url"
 
-  private const val API_URL = "https://api.github.com/repos/q3146dq4/NovelFlow/releases/latest"
+  private const val API_URL = "https://api.github.com/repos/q3146dq4/NovelRegEx/releases/latest"
   private const val CACHE_TTL_MS = 3_600_000L // 1시간
   private const val KEY_CACHE_URL = "cache_download_url"
   private const val KEY_CACHE_VERSION = "cache_version"
   private const val KEY_CACHE_TIMESTAMP = "cache_timestamp"
   private const val KEY_LAST_VERSION = "last_known_version_name"
-  private const val PREFS_NAME = "novelflow_update_prefs"
+  private const val PREFS_NAME = "NovelRegEx_update_prefs"
 
   fun prefs(context: Context): SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -144,7 +144,7 @@ object UpdateChecker {
         setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
         setAllowedOverMetered(true)
         setAllowedOverRoaming(true)
-        setDestinationInExternalFilesDir(context, null, "novelflow-$version.apk")
+        setDestinationInExternalFilesDir(context, null, "NovelRegEx-$version.apk")
       }
     return try {
       val dm = context.getSystemService(DownloadManager::class.java)

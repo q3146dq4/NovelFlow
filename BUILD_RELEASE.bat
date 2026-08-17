@@ -14,7 +14,7 @@ if not defined ANDROID_HOME goto no_sdk
 if not defined JAVA_HOME goto no_java
 if not exist "%JAVA_HOME%\bin\java.exe" goto no_java
 
-echo === Building signed NovelFlow release ===
+echo === Building signed NovelRegEx release ===
 if "%KEYSTORE_PATH%"=="" goto no_signing
 if "%KEY_ALIAS%"=="" goto no_signing
 if "%KEYSTORE_PASSWORD%"=="" goto no_signing
@@ -26,7 +26,7 @@ if errorlevel 1 goto fail
 echo.
 echo BUILD SUCCESSFUL
 for /f "tokens=1,* delims==" %%A in (gradle.properties) do if "%%A"=="app.versionName" set "APP_VERSION=%%B"
-echo APK: %ROOT%apk\NovelFlow-v%APP_VERSION%.apk
+echo APK: %ROOT%apk\NovelRegEx-v%APP_VERSION%.apk
 subst %BUILD_DRIVE% /d >nul 2>&1
 pause
 exit /b 0

@@ -24,5 +24,5 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "NovelFlow"
+rootProject.name = "NovelRegEx"
 include(":app")

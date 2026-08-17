@@ -1,4 +1,4 @@
-package com.novelflow.app.filter
+package com.NovelRegEx.app.filter
 
 import android.content.Context
 import androidx.core.content.edit
@@ -134,7 +134,7 @@ class FilterRepository(
         connectTimeout = 15_000
         readTimeout = 30_000
         requestMethod = "GET"
-        setRequestProperty("User-Agent", "NovelFlow Filter Updater")
+        setRequestProperty("User-Agent", "NovelRegEx Filter Updater")
       }
     connection.connect()
     if (connection.responseCode !in 200..299) {

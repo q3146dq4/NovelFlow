@@ -1,4 +1,4 @@
-package com.novelflow.app.update
+package com.NovelRegEx.app.update
 
 sealed class UpdateResult {
   data class Available(

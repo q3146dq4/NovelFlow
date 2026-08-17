@@ -1,11 +1,11 @@
-NovelFlow v0.1 - one-click Windows build
+NovelRegEx v0.1 - one-click Windows build
 
 This build intentionally restores the known-working TTS path from the earlier NP Viewer TTS build.
-The internal TTS bridge name (window.__npTts) is preserved for compatibility. The user-visible branding, package ID, and update channel belong to NovelFlow.
+The internal TTS bridge name (window.__npTts) is preserved for compatibility. The user-visible branding, package ID, and update channel belong to NovelRegEx.
 
 1. Extract this ZIP.
 2. Double-click BUILD_ALL.bat.
 3. The script uses a short Z: build path to avoid Windows path-length failures.
-4. Output: NovelFlow-v0.1-debug.apk
+4. Output: NovelRegEx-v0.1-debug.apk
 
-Application ID: com.novelflow.app
+Application ID: com.NovelRegEx.app

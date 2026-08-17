@@ -36,15 +36,15 @@ if not defined JAVA17_HOME (
 )
 set "JAVA_HOME=%JAVA17_HOME%"
 set "PATH=%JAVA_HOME%\bin;%PATH%"
-echo === Building NovelFlow v0.1 ===
+echo === Building NovelRegEx v0.1 ===
 call gradlew.bat --stop >nul 2>&1
 call gradlew.bat :app:assembleDebug
 if errorlevel 1 goto fail
-copy /y "%ROOT%app\build\outputs\apk\debug\app-debug.apk" "%ROOT%NovelFlow-v0.1-debug.apk" >nul
+copy /y "%ROOT%app\build\outputs\apk\debug\app-debug.apk" "%ROOT%NovelRegEx-v0.1-debug.apk" >nul
 if errorlevel 1 goto fail
 echo.
 echo BUILD SUCCESSFUL
-echo APK: %ROOT%NovelFlow-v0.1-debug.apk
+echo APK: %ROOT%NovelRegEx-v0.1-debug.apk
 subst %BUILD_DRIVE% /d >nul 2>&1
 pause
 exit /b 0

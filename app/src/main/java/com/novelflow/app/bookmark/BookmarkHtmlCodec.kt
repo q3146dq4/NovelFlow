@@ -1,4 +1,4 @@
-package com.novelflow.app.bookmark
+package com.NovelRegEx.app.bookmark
 
 import android.text.Html
 import androidx.core.text.htmlEncode

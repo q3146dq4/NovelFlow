@@ -1,4 +1,4 @@
-package com.novelflow.app.activity
+package com.NovelRegEx.app.activity
 
 import android.os.Bundle
 import android.view.HapticFeedbackConstants
@@ -13,9 +13,9 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
-import com.novelflow.app.R
-import com.novelflow.app.bookmark.BookmarkItem
-import com.novelflow.app.bookmark.BookmarkRepository
+import com.NovelRegEx.app.R
+import com.NovelRegEx.app.bookmark.BookmarkItem
+import com.NovelRegEx.app.bookmark.BookmarkRepository
 import java.util.Collections
 
 class BookmarkOrderActivity : AppCompatActivity() {

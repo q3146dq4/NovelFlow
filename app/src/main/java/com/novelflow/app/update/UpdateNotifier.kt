@@ -1,4 +1,4 @@
-package com.novelflow.app.update
+package com.NovelRegEx.app.update
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -6,8 +6,8 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationCompat
-import com.novelflow.app.R
-import com.novelflow.app.receiver.UpdateDownloadReceiver
+import com.NovelRegEx.app.R
+import com.NovelRegEx.app.receiver.UpdateDownloadReceiver
 import java.io.File
 
 /** 업데이트 관련 알림을 통합 관리하는 객체 */
@@ -109,7 +109,7 @@ object UpdateNotifier {
     val notification =
       NotificationCompat
         .Builder(context, CHANNEL_ID)
-        .setSmallIcon(R.drawable.ic_notification_novelflow)
+        .setSmallIcon(R.drawable.ic_notification_NovelRegEx)
         .setPriority(NotificationCompat.PRIORITY_HIGH)
         .apply(block)
         .build()

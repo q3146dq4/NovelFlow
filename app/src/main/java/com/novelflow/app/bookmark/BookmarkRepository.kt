@@ -1,4 +1,4 @@
-package com.novelflow.app.bookmark
+package com.NovelRegEx.app.bookmark
 
 import android.content.Context
 import androidx.core.content.edit

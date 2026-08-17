@@ -1,5 +1,5 @@
 /*
- * Native TTS bridge for NovelFlow
+ * Native TTS bridge for NovelRegEx
  * Rotation/layout recovery version
  */
 

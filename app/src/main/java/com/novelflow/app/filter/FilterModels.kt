@@ -1,4 +1,4 @@
-package com.novelflow.app.filter
+package com.NovelRegEx.app.filter
 
 import androidx.core.net.toUri
 

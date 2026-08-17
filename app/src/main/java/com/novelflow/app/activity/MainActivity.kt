@@ -1,4 +1,4 @@
-package com.novelflow.app.activity
+package com.NovelRegEx.app.activity
 
 import android.annotation.SuppressLint
 import android.app.Notification
@@ -53,13 +53,13 @@ import androidx.preference.PreferenceManager
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.google.android.material.progressindicator.LinearProgressIndicator
-import com.novelflow.app.R
-import com.novelflow.app.filter.FilterPreferences
-import com.novelflow.app.filter.FilterRuntime
-import com.novelflow.app.layout.TopSwipeRefreshLayout
-import com.novelflow.app.update.UpdateChecker
-import com.novelflow.app.update.UpdateNotifier
-import com.novelflow.app.tts.TtsRegexStore
+import com.NovelRegEx.app.R
+import com.NovelRegEx.app.filter.FilterPreferences
+import com.NovelRegEx.app.filter.FilterRuntime
+import com.NovelRegEx.app.layout.TopSwipeRefreshLayout
+import com.NovelRegEx.app.update.UpdateChecker
+import com.NovelRegEx.app.update.UpdateNotifier
+import com.NovelRegEx.app.tts.TtsRegexStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -81,7 +81,7 @@ class MainActivity : AppCompatActivity() {
   }
 
   private val ttsScript by lazy {
-    loadAssetText("novelflow-tts.js")
+    loadAssetText("NovelRegEx-tts.js")
   }
 
   private val bookmarkLauncher =
@@ -647,7 +647,7 @@ class MainActivity : AppCompatActivity() {
   }
 
   private fun refreshCosmeticFilters(view: WebView) {
-    view.evaluateJavascript("window.__novelflowRefreshCosmetic&&window.__novelflowRefreshCosmetic();", null)
+    view.evaluateJavascript("window.__NovelRegExRefreshCosmetic&&window.__NovelRegExRefreshCosmetic();", null)
   }
 
   inner class NovelTtsController : UtteranceProgressListener(), TextToSpeech.OnInitListener {
@@ -690,7 +690,7 @@ class MainActivity : AppCompatActivity() {
     private val wifiLock: WifiManager.WifiLock =
       (applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager).createWifiLock(
         WifiManager.WIFI_MODE_FULL_HIGH_PERF,
-        "${packageName}:NovelFlow-Binge"
+        "${packageName}:NovelRegEx-Binge"
       ).apply {
         setReferenceCounted(false)
       }
@@ -1459,7 +1459,7 @@ class MainActivity : AppCompatActivity() {
       val pendingContentIntent = PendingIntent.getActivity(this@MainActivity, 0, contentIntent, PendingIntent.FLAG_IMMUTABLE)
 
       val builder = Notification.Builder(this@MainActivity, channelId)
-          .setSmallIcon(R.drawable.ic_notification_novelflow)
+          .setSmallIcon(R.drawable.ic_notification_NovelRegEx)
           .setContentTitle(titleText?.text?.toString() ?: "노벨피아 TTS")
           .setContentText(if (isPlaying) "재생 중" else "일시정지")
            .setOngoing(true)

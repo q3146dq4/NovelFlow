@@ -1,9 +1,9 @@
-package com.novelflow.app.receiver
+package com.NovelRegEx.app.receiver
 
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import com.novelflow.app.update.UpdateChecker
+import com.NovelRegEx.app.update.UpdateChecker
 
 /** 업데이트 알림 액션 버튼을 처리하여 DownloadManager 다운로드를 시작하는 리시버. */
 class UpdateDownloadReceiver : BroadcastReceiver() {

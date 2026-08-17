@@ -1,4 +1,4 @@
-name: Build and Release NovelFlow
+name: Build and Release NovelRegEx
 
 on:
   workflow_dispatch:
@@ -14,9 +14,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       KEYSTORE_PATH: ${{ github.workspace }}/release.keystore
-      KEY_ALIAS: ${{ secrets.NOVELFLOW_KEY_ALIAS }}
-      KEYSTORE_PASSWORD: ${{ secrets.NOVELFLOW_KEYSTORE_PASSWORD }}
-      KEY_PASSWORD: ${{ secrets.NOVELFLOW_KEY_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.NovelRegEx_KEY_ALIAS }}
+      KEYSTORE_PASSWORD: ${{ secrets.NovelRegEx_KEYSTORE_PASSWORD }}
+      KEY_PASSWORD: ${{ secrets.NovelRegEx_KEY_PASSWORD }}
 
     steps:
       - name: Checkout code
@@ -32,11 +32,11 @@ jobs:
       - name: Prepare release keystore
         shell: bash
         run: |
-          if [[ -z "${{ secrets.NOVELFLOW_KEYSTORE_BASE64 }}" ]]; then
-            echo "NOVELFLOW_KEYSTORE_BASE64 secret is required for release builds."
+          if [[ -z "${{ secrets.NovelRegEx_KEYSTORE_BASE64 }}" ]]; then
+            echo "NovelRegEx_KEYSTORE_BASE64 secret is required for release builds."
             exit 1
           fi
-          echo "${{ secrets.NOVELFLOW_KEYSTORE_BASE64 }}" | base64 --decode > "$KEYSTORE_PATH"
+          echo "${{ secrets.NovelRegEx_KEYSTORE_BASE64 }}" | base64 --decode > "$KEYSTORE_PATH"
           test -s "$KEYSTORE_PATH"
 
       - name: Grant execute permission for gradlew
@@ -49,20 +49,20 @@ jobs:
         shell: bash
         run: |
           TAG="${GITHUB_REF_NAME#v}"
-          APK="apk/NovelFlow-v${TAG}.apk"
+          APK="apk/NovelRegEx-v${TAG}.apk"
           test -f "$APK" || { echo "Release APK not found: $APK"; exit 1; }
           unzip -t "$APK" >/dev/null
 
       - name: Upload release APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: NovelFlow-${{ github.ref_name }}
-          path: apk/NovelFlow-*.apk
+          name: NovelRegEx-${{ github.ref_name }}
+          path: apk/NovelRegEx-*.apk
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: apk/NovelFlow-*.apk
-          name: NovelFlow ${{ github.ref_name }}
+          files: apk/NovelRegEx-*.apk
+          name: NovelRegEx ${{ github.ref_name }}

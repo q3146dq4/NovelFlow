@@ -1,4 +1,4 @@
-package com.novelflow.app.activity
+package com.NovelRegEx.app.activity
 
 import android.net.Uri
 import android.os.Bundle
@@ -19,9 +19,9 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import com.novelflow.app.R
-import com.novelflow.app.tts.TtsRegexRule
-import com.novelflow.app.tts.TtsRegexStore
+import com.NovelRegEx.app.R
+import com.NovelRegEx.app.tts.TtsRegexRule
+import com.NovelRegEx.app.tts.TtsRegexStore
 import java.util.Locale
 import java.util.UUID
 import java.util.regex.Pattern
@@ -94,7 +94,7 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
         }
 
         findViewById<Button>(R.id.button_export).setOnClickListener {
-            exportLauncher.launch("novelflow-tts-regex.json")
+            exportLauncher.launch("NovelRegEx-tts-regex.json")
         }
 
         testButton.setOnClickListener {

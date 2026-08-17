@@ -1,4 +1,4 @@
-package com.novelflow.app.activity
+package com.NovelRegEx.app.activity
 
 import android.content.Intent
 import android.graphics.Color
@@ -27,10 +27,10 @@ import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toDrawable
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import com.novelflow.app.R
-import com.novelflow.app.bookmark.BookmarkHtmlCodec
-import com.novelflow.app.bookmark.BookmarkItem
-import com.novelflow.app.bookmark.BookmarkRepository
+import com.NovelRegEx.app.R
+import com.NovelRegEx.app.bookmark.BookmarkHtmlCodec
+import com.NovelRegEx.app.bookmark.BookmarkItem
+import com.NovelRegEx.app.bookmark.BookmarkRepository
 import java.io.OutputStreamWriter
 
 class BookmarksActivity : AppCompatActivity() {
@@ -259,7 +259,7 @@ class BookmarksActivity : AppCompatActivity() {
           popupWindow.dismiss()
           when (index) {
             0 -> startActivity(Intent(this, BookmarkOrderActivity::class.java))
-            1 -> exportLauncher.launch("novelflow-bookmarks.html")
+            1 -> exportLauncher.launch("NovelRegEx-bookmarks.html")
             2 -> importLauncher.launch(arrayOf("text/html", "text/*", "application/octet-stream"))
           }
         },

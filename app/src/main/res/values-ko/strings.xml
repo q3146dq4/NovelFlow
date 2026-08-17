@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <string name="app_name">NovelFlow</string>
+  <string name="app_name">NovelRegEx</string>
   <string name="bookmark_title_hint">제목</string>
   <string name="bookmark_url_hint">URL</string>
   <string name="btn_allow">허가</string>
@@ -12,7 +12,7 @@
   <string name="btn_overwrite">덮어쓰기</string>
   <string name="btn_reset">초기화</string>
   <string name="btn_skip">넘어가기</string>
-  <string name="dlg_notification_permission_message">NovelFlow는 업데이트 다운로드가 완료되면 알림 권한을 요청합니다. 이 권한이 없으면 Android 13 이상에서는 \"업데이트 준비 완료\" 알림이 나타나지 않습니다. 설정에서 \"업데이트 설치\"를 탭하여 언제든지 업데이트를 설치할 수 있습니다. 건너뛰기 또는 거절을 탭하면 나중에 알림을 활성화하려면 앱의 설정으로 수동으로 이동하라는 메시지가 다시 표시되지 않습니다.</string>
+  <string name="dlg_notification_permission_message">NovelRegEx는 업데이트 다운로드가 완료되면 알림 권한을 요청합니다. 이 권한이 없으면 Android 13 이상에서는 \"업데이트 준비 완료\" 알림이 나타나지 않습니다. 설정에서 \"업데이트 설치\"를 탭하여 언제든지 업데이트를 설치할 수 있습니다. 건너뛰기 또는 거절을 탭하면 나중에 알림을 활성화하려면 앱의 설정으로 수동으로 이동하라는 메시지가 다시 표시되지 않습니다.</string>
   <string name="dlg_notification_permission_title">알림 허용</string>
   <string name="dlg_notification_settings_message">알림 권한이 영구적으로 거부되었습니다. \"업데이트 준비 완료\" 알림이 나타나지 않습니다. 다시 활성화하려면 앱의 설정을 열고 알림 권한을 수동으로 부여하세요. 설정에서 \"업데이트 설치\"를 탭하여 업데이트를 설치할 수 있습니다.</string>
   <string name="dlg_notification_settings_title">알림 권한 필요</string>
@@ -57,7 +57,7 @@
   <string name="noti_download_desc">%1$s 버전 다운로드 중</string>
   <string name="noti_download_failed_text">다운로드에 실패했습니다. 재시도를 눌러 다시 시도하세요</string>
   <string name="noti_download_failed_title">다운로드 실패</string>
-  <string name="noti_download_title">NovelFlow 업데이트 다운로드 중</string>
+  <string name="noti_download_title">NovelRegEx 업데이트 다운로드 중</string>
   <string name="noti_update_available_text">v%1$s 버전을 다운로드할 수 있습니다</string>
   <string name="noti_update_available_title">업데이트 사용 가능</string>
   <string name="noti_update_ready_text">탭하여 새 버전 설치</string>

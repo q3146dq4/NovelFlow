@@ -1,4 +1,4 @@
-package com.novelflow.app.activity
+package com.NovelRegEx.app.activity
 
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -28,16 +28,16 @@ import androidx.preference.ListPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.PreferenceManager
-import com.novelflow.app.R
-import com.novelflow.app.bookmark.BookmarkRepository
-import com.novelflow.app.filter.FilterPreferences
-import com.novelflow.app.filter.FilterRuntime
-import com.novelflow.app.setting.BackupSettings
-import com.novelflow.app.setting.SettingBackup
-import com.novelflow.app.setting.SettingBackupCodec
-import com.novelflow.app.update.UpdateChecker
-import com.novelflow.app.update.UpdateInfo
-import com.novelflow.app.update.UpdateResult
+import com.NovelRegEx.app.R
+import com.NovelRegEx.app.bookmark.BookmarkRepository
+import com.NovelRegEx.app.filter.FilterPreferences
+import com.NovelRegEx.app.filter.FilterRuntime
+import com.NovelRegEx.app.setting.BackupSettings
+import com.NovelRegEx.app.setting.SettingBackup
+import com.NovelRegEx.app.setting.SettingBackupCodec
+import com.NovelRegEx.app.update.UpdateChecker
+import com.NovelRegEx.app.update.UpdateInfo
+import com.NovelRegEx.app.update.UpdateResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -613,7 +613,7 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun createSettingBackupFileName(): String {
       val timestamp = SimpleDateFormat("yyMMddHHmmss", Locale.US).format(Date())
-      return "novelflow-setting-$timestamp.json"
+      return "NovelRegEx-setting-$timestamp.json"
     }
 
     private fun getCurrentAppVersion(): String =

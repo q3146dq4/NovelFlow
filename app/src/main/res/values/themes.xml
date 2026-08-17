@@ -1,4 +1,4 @@
 <resources>
-  <style name="Base.Theme.NovelFlow" parent="Theme.Material3.DayNight.NoActionBar" />
-  <style name="Theme.NovelFlow" parent="Base.Theme.NovelFlow" />
+  <style name="Base.Theme.NovelRegEx" parent="Theme.Material3.DayNight.NoActionBar" />
+  <style name="Theme.NovelRegEx" parent="Base.Theme.NovelRegEx" />
 </resources>

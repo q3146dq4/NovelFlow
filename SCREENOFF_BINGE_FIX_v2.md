@@ -1,4 +1,4 @@
-# NovelFlow v0.1 — screen-off binge playback v2
+# NovelRegEx v0.1 — screen-off binge playback v2
 
 This revision keeps the existing TTS path intact and adds a chapter preloader so the next chapter's text can be prepared while the current chapter is still playing. The main WebView remains the visible viewer; a tiny attached WebView loads the next episode in parallel.
 

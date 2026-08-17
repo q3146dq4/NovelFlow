@@ -1,4 +1,4 @@
-package com.novelflow.app.filter
+package com.NovelRegEx.app.filter
 
 class CosmeticFilterEngine private constructor(
   private val genericRules: List<CompiledCosmeticRule>,

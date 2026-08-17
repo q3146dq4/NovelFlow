@@ -1,4 +1,4 @@
-package com.novelflow.app.receiver
+package com.NovelRegEx.app.receiver
 
 import android.app.DownloadManager
 import android.content.BroadcastReceiver
@@ -6,8 +6,8 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.content.edit
 import androidx.core.net.toUri
-import com.novelflow.app.update.UpdateChecker
-import com.novelflow.app.update.UpdateNotifier
+import com.NovelRegEx.app.update.UpdateChecker
+import com.NovelRegEx.app.update.UpdateNotifier
 import java.io.File
 
 /** 다운로드 완료 이벤트를 수신하여 설치 알림 또는 실패 알림을 표시 */
