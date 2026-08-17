@@ -1,6 +1,6 @@
 # NovelFlow
 
-**NovelFlow**는 [TetraTheta/np-viewer](https://github.com/TetraTheta/np-viewer)를 기반으로 개발한 독립적인 파생 프로젝트입니다.
+**NovelFlow**는 [TetraTheta/np-viewer](https://github.com/TetraTheta/np-viewer)를 기반으로 TTS 기능을 추가한 파생 프로젝트입니다.
 
 원본 NP Viewer의 가벼운 WebView 기반 구조와 노벨피아 뷰어 기능을 유지하면서, **TTS(Text-to-Speech) 기능, TTS 전용 정규식 처리, 문장 강조 표시, 정주행, 다음 회차 미리 로딩 및 백그라운드 재생** 등의 기능을 추가했습니다.
 
