@@ -809,3 +809,4 @@ FodyWeavers.xsd
 
 apk/
 .claude/
+.tools/
