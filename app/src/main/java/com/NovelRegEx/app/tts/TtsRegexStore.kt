@@ -9,7 +9,7 @@ object TtsRegexStore {
     private const val KEY_RULES = "tts_regex_rules_v1"
     private const val KEY_DEFAULT_RULES_VERSION = "tts_regex_default_rules_version"
     private const val KEY_KOREAN_NUMBER_ENABLED = "tts_regex_korean_number_enabled_v1"
-    private const val DEFAULT_RULES_VERSION = 7
+    private const val DEFAULT_RULES_VERSION = 8
 
     private const val NUMBER_TOKEN = "(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\\.[0-9]+)?"
 
@@ -99,24 +99,88 @@ object TtsRegexStore {
         rules: MutableList<TtsRegexRule>,
     ): MutableList<TtsRegexRule> {
         val currentVersion = prefs.getInt(KEY_DEFAULT_RULES_VERSION, 1)
+        if (currentVersion >= DEFAULT_RULES_VERSION) return rules
 
-        // Version 7 removes the experimental ${ko-number:N} replacement syntax
-        // from all built-in defaults. Built-ins are canonicalized once so every
-        // installation ends up with ordinary Java replacements ($1, $2 ...).
-        // Custom rules remain untouched.
-        if (currentVersion < DEFAULT_RULES_VERSION) {
+        // Emergency one-time repair for builds v3-v7.
+        //
+        // Several previously shipped migrations could leave built-in rules with
+        // old replacements such as "$1점$2", "$1달러", or even "달러$1".
+        // Those rules never invoke ${ko-number:N}, so the global Korean-number
+        // switch appears to do nothing.  Version 6 canonicalizes BUILT-IN rule
+        // IDs exactly once.  Custom user-created rules are preserved.
+        //
+        // Enabled/disabled state is kept for every built-in rule that already
+        // exists.  Deleted built-in rules are restored once because the prior
+        // migrations made it impossible to distinguish a deliberate deletion
+        // from a missing/corrupted default.  After this repair, version 6 is
+        // stored and future user edits/deletions are left untouched.
+        if (currentVersion in 2 until DEFAULT_RULES_VERSION) {
             val repaired = forceRepairBuiltInDefaults(rules)
             saveToPreferences(prefs, repaired)
             return repaired
         }
 
+        val oldV2 = v2DefaultRules()
+        val currentDefaults = defaultRules()
+        val oldById = oldV2.associateBy { it.id }
+        val currentById = currentDefaults.associateBy { it.id }
+
+        if (currentVersion >= 2) {
+            // Repair every untouched v2 rule even when a broken v3 migration
+            // previously marked the preference version as upgraded.
+            for (index in rules.indices) {
+                val current = rules[index]
+                val oldDefault = oldById[current.id] ?: continue
+                if (!sameRuleContent(current, oldDefault)) continue
+
+                val updated = currentById[current.id] ?: continue
+                rules[index] =
+                    updated.copy(
+                        enabled = current.enabled,
+                    )
+            }
+
+            // v3 used temporary IDs for two whitespace defaults. v4 kept a
+            // repair for them; keep accepting both broken states here.
+            if (currentVersion <= 4) {
+                migrateBrokenV3Aliases(rules, currentById)
+            }
+
+            // Only a direct upgrade from v2 should receive rules that genuinely
+            // did not exist in v2. Once v3 has run, absence can mean the user
+            // deliberately deleted that rule, so do not resurrect it.
+            if (currentVersion == 2) {
+                val oldIds = oldV2.mapTo(mutableSetOf()) { it.id }
+                val existingIds = rules.mapTo(mutableSetOf()) { it.id }
+
+                currentDefaults
+                    .filter { it.id !in oldIds }
+                    .forEach { rule ->
+                        if (rule.id !in existingIds) {
+                            rules += rule
+                            existingIds += rule.id
+                        }
+                    }
+            }
+        } else {
+            // Direct upgrade from the original 3-rule era.
+            val existingSignatures = rules.mapTo(mutableSetOf()) { signatureOf(it) }
+            speechNormalizationRules().forEach { rule ->
+                if (signatureOf(rule) !in existingSignatures) {
+                    rules += rule
+                    existingSignatures += signatureOf(rule)
+                }
+            }
+        }
+
+        saveToPreferences(prefs, rules)
         return rules
     }
 
 
     /**
      * One-time canonicalization of built-in defaults after the broken v3-v6
-     * migration chain.
+     * migration chain, including the v7 global-number experiment.
      *
      * Custom rules are preserved.  Every canonical built-in rule is restored
      * in canonical order, while preserving the user's enabled state when the
@@ -336,7 +400,7 @@ object TtsRegexStore {
                 id = "default-read-fraction",
                 name = "분수 읽기",
                 pattern = "(?<![0-9.,])($NUMBER_TOKEN)\\s*/\\s*($NUMBER_TOKEN)(?![0-9.,])",
-                replacement = "${'$'}2분의${'$'}1",
+                replacement = "${'$'}{ko-number:2}분의${'$'}{ko-number:1}",
                 ignoreCase = false,
                 isRegex = true,
             ),
@@ -344,7 +408,7 @@ object TtsRegexStore {
                 id = "default-read-percent",
                 name = "퍼센트(%) 읽기",
                 pattern = "(?<![0-9.,])($NUMBER_TOKEN)\\s*%",
-                replacement = "${'$'}1퍼센트",
+                replacement = "${'$'}{ko-number:1}퍼센트",
                 ignoreCase = false,
                 isRegex = true,
             ),
@@ -352,7 +416,7 @@ object TtsRegexStore {
                 id = "default-read-dollar-prefix",
                 name = "달러(\$) 앞표기 읽기",
                 pattern = "\\${'$'}\\s*($NUMBER_TOKEN)",
-                replacement = "${'$'}1달러",
+                replacement = "${'$'}{ko-number:1}달러",
                 ignoreCase = false,
                 isRegex = true,
             ),
@@ -360,7 +424,7 @@ object TtsRegexStore {
                 id = "default-read-dollar",
                 name = "달러(\$) 뒤표기 읽기",
                 pattern = "(?<![0-9.,])($NUMBER_TOKEN)\\s*\\${'$'}",
-                replacement = "${'$'}1달러",
+                replacement = "${'$'}{ko-number:1}달러",
                 ignoreCase = false,
                 isRegex = true,
             ),
@@ -368,7 +432,7 @@ object TtsRegexStore {
                 id = "default-read-yen-prefix",
                 name = "엔(¥) 앞표기 읽기",
                 pattern = "¥\\s*($NUMBER_TOKEN)",
-                replacement = "${'$'}1엔",
+                replacement = "${'$'}{ko-number:1}엔",
                 ignoreCase = false,
                 isRegex = true,
             ),
@@ -376,7 +440,7 @@ object TtsRegexStore {
                 id = "default-read-yen",
                 name = "엔(¥) 뒤표기 읽기",
                 pattern = "(?<![0-9.,])($NUMBER_TOKEN)\\s*¥",
-                replacement = "${'$'}1엔",
+                replacement = "${'$'}{ko-number:1}엔",
                 ignoreCase = false,
                 isRegex = true,
             ),
@@ -384,7 +448,7 @@ object TtsRegexStore {
                 id = "default-read-euro-prefix",
                 name = "유로(€) 앞표기 읽기",
                 pattern = "€\\s*($NUMBER_TOKEN)",
-                replacement = "${'$'}1유로",
+                replacement = "${'$'}{ko-number:1}유로",
                 ignoreCase = false,
                 isRegex = true,
             ),
@@ -392,7 +456,7 @@ object TtsRegexStore {
                 id = "default-read-euro",
                 name = "유로(€) 뒤표기 읽기",
                 pattern = "(?<![0-9.,])($NUMBER_TOKEN)\\s*€",
-                replacement = "${'$'}1유로",
+                replacement = "${'$'}{ko-number:1}유로",
                 ignoreCase = false,
                 isRegex = true,
             ),
@@ -408,7 +472,7 @@ object TtsRegexStore {
                 id = "default-read-decimal",
                 name = "소수점 읽기",
                 pattern = "(?<![0-9.${'$'}¥€])((?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)\\.[0-9]+)(?![0-9.A-Za-z%${'$'}¥€])",
-                replacement = "${'$'}1",
+                replacement = "${'$'}{ko-number:1}",
                 ignoreCase = false,
                 isRegex = true,
             ),
@@ -416,7 +480,7 @@ object TtsRegexStore {
                 id = "default-remove-thousands-separator",
                 name = "천 단위 숫자 읽기",
                 pattern = "(?<![0-9,${'$'}¥€])([0-9]{1,3}(?:,[0-9]{3})+)(?![0-9,A-Za-z%${'$'}¥€])",
-                replacement = "${'$'}1",
+                replacement = "${'$'}{ko-number:1}",
                 ignoreCase = false,
                 isRegex = true,
             ),
@@ -440,7 +504,7 @@ object TtsRegexStore {
             id = id,
             name = name,
             pattern = "(?<![0-9.,])($NUMBER_TOKEN)\\s*$symbol(?![A-Za-z])",
-            replacement = "${'$'}1$koreanName",
+            replacement = "${'$'}{ko-number:1}$koreanName",
             ignoreCase = true,
             isRegex = true,
         )

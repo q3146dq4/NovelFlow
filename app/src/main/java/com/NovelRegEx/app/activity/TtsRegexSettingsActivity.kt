@@ -192,9 +192,9 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
 
         val description = TextView(this).apply {
             text =
-                "ON: 정규식 적용이 끝난 뒤 일반 숫자를 한국어 한자어 발음으로 바꿉니다. " +
+                "ON: ${'$'}{ko-number:1} 치환이 숫자를 한국어 발음으로 바꿉니다. " +
                     "예: 3.14kg → 삼점일사킬로그램, 1,000 → 천.\n" +
-                    "OFF: 정규식 치환만 적용하고 숫자는 원문 표기를 유지합니다."
+                    "OFF: 숫자 원문을 유지합니다. 예: 3.14kg → 3.14킬로그램."
             textSize = 12f
             setTextColor(0xFF555555.toInt())
             setPadding(0, dp(6), 0, 0)
@@ -393,8 +393,8 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
 
         val testHint = TextView(this).apply {
             text =
-                "치환 그룹은 표준 형식인 \$1, \$2 등을 사용합니다.\n" +
-                    "한국어 숫자 발음 변환은 위의 전역 ON/OFF 설정으로 적용됩니다."
+                "그룹: \$1, \$2 등 · 한국어 숫자: ${'$'}{ko-number:1}\n" +
+                    "한국어 숫자 기능을 끄면 매크로는 캡처 숫자 원문을 그대로 사용합니다."
             textSize = 12f
             setTextColor(0xFF777777.toInt())
             setPadding(0, dp(4), 0, dp(8))
@@ -437,18 +437,31 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
                 }
 
                 if (rule.isRegex) {
-                    runCatching {
-                        val flags = if (rule.ignoreCase) {
-                            Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
-                        } else {
-                            Pattern.UNICODE_CASE
+                    val compiledPattern =
+                        runCatching {
+                            val flags = if (rule.ignoreCase) {
+                                Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+                            } else {
+                                Pattern.UNICODE_CASE
+                            }
+                            Pattern.compile(rule.pattern, flags)
+                        }.getOrElse {
+                            Toast.makeText(
+                                this,
+                                "정규식 오류: ${it.message}",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            return@setOnClickListener
                         }
-                        Pattern.compile(rule.pattern, flags)
-                    }.onFailure {
+
+                    validateKoreanNumberMacros(
+                        replacement = rule.replacement,
+                        groupCount = compiledPattern.matcher("").groupCount(),
+                    )?.let { message ->
                         Toast.makeText(
                             this,
-                            "정규식 오류: ${it.message}",
-                            Toast.LENGTH_LONG
+                            message,
+                            Toast.LENGTH_LONG,
                         ).show()
                         return@setOnClickListener
                     }
@@ -467,6 +480,49 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
         }
 
         dialog.show()
+    }
+
+    private fun validateKoreanNumberMacros(
+        replacement: String,
+        groupCount: Int,
+    ): String? {
+        if (!replacement.contains("\${ko-number:")) return null
+
+        val validMacro = Regex("""\$\{ko-number:(\d+)}""")
+        val allMacroLike = Regex("""\$\{ko-number:([^}]*)}""")
+
+        val malformed =
+            allMacroLike
+                .findAll(replacement)
+                .firstOrNull { validMacro.matchEntire(it.value) == null }
+        if (malformed != null || replacement.count { it == '$' } > 0 &&
+            replacement.contains("\${ko-number:") &&
+            validMacro.findAll(replacement).none()
+        ) {
+            return "잘못된 한국어 숫자 매크로입니다. \${ko-number:1}, \${ko-number:2}처럼 캡처 그룹 번호를 사용하세요."
+        }
+
+        validMacro.findAll(replacement).forEach { match ->
+            val groupIndex = match.groupValues[1].toIntOrNull()
+                ?: return "잘못된 한국어 숫자 매크로입니다."
+            if (groupIndex < 1 || groupIndex > groupCount) {
+                return "${match.value}가 존재하지 않는 캡처 그룹을 가리킵니다. 이 정규식의 캡처 그룹은 ${groupCount}개입니다."
+            }
+        }
+
+        // Catch an unterminated literal such as ${ko-number:1
+        var searchFrom = 0
+        while (true) {
+            val start = replacement.indexOf("\${ko-number:", searchFrom)
+            if (start < 0) break
+            val end = replacement.indexOf('}', start)
+            if (end < 0) {
+                return "잘못된 한국어 숫자 매크로입니다. 닫는 }가 필요합니다."
+            }
+            searchFrom = end + 1
+        }
+
+        return null
     }
 
     private fun confirmDelete(index: Int) {

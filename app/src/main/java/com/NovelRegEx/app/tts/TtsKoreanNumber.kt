@@ -4,55 +4,86 @@ import java.util.regex.Matcher
 import java.util.regex.Pattern
 
 /**
- * Korean pronunciation normalizer for ordinary cardinal numbers.
+ * TTS regex replacement helper for `${ko-number:N}`.
  *
- * - Integer part uses Sino-Korean place values: 1234 -> 천이백삼십사
- * - Decimal digits are read one by one: 3.14 -> 삼점일사
- * - Proper thousands separators are accepted: 1,234,567 -> 백이십삼만사천오백육십칠
- * - Multi-digit integers with a leading zero are left untouched because they are
- *   more likely to be IDs, phone fragments, codes, etc.
+ * ON:
+ *   3.14 -> 삼점일사
+ *   14.5 -> 십사점오
+ *   1,000 -> 천
+ *   1,234,567 -> 백이십삼만사천오백육십칠
  *
- * This is deliberately NOT a regex replacement macro. Regex rules remain normal
- * Java replacements ($1, $2 ...). When the global Korean-number option is ON,
- * the final regex result is passed through normalizeText().
+ * OFF:
+ *   the captured numeric text is kept as-is.
  */
 object TtsKoreanNumber {
+    private val macroPattern = Pattern.compile("\\$\\{ko-number:(\\d+)}")
     private val validNumberPattern =
         Pattern.compile("^[+-]?(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\\.[0-9]+)?$")
-
-    // Avoid touching numbers embedded in version/IP/code-like strings.
-    // Korean letters/units are intentionally allowed next to the number.
-    private val numberInTextPattern =
-        Pattern.compile(
-            "(?<![0-9A-Za-z_.:\\-/])" +
-                "([+-]?(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\\.[0-9]+)?)" +
-                "(?![0-9A-Za-z_.:\\-/])",
-        )
 
     private val digitNames = arrayOf("영", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구")
     private val smallUnits = arrayOf("", "십", "백", "천")
     private val largeUnits =
         arrayOf("", "만", "억", "조", "경", "해", "자", "양", "구", "간", "정", "재", "극")
 
-    fun normalizeText(input: String): String {
-        if (input.isBlank()) return input
-
-        val matcher = numberInTextPattern.matcher(input)
-        val output = StringBuffer(input.length + 32)
-        while (matcher.find()) {
-            val raw = matcher.group(1)
-            val converted = toKoreanOrNull(raw) ?: raw
-            matcher.appendReplacement(output, Matcher.quoteReplacement(converted))
+    fun replaceAll(
+        pattern: Pattern,
+        input: String,
+        replacement: String,
+        koreanNumberEnabled: Boolean,
+    ): String {
+        if (!replacement.contains("\${ko-number:")) {
+            return pattern.matcher(input).replaceAll(replacement)
         }
+
+        val matcher = pattern.matcher(input)
+        val output = StringBuffer()
+
+        while (matcher.find()) {
+            val expandedReplacement =
+                expandMacros(
+                    template = replacement,
+                    match = matcher,
+                    koreanNumberEnabled = koreanNumberEnabled,
+                ) ?: return input
+
+            matcher.appendReplacement(output, expandedReplacement)
+        }
+
         matcher.appendTail(output)
         return output.toString()
     }
 
-    fun toKorean(raw: String): String = toKoreanOrNull(raw) ?: raw
+    private fun expandMacros(
+        template: String,
+        match: Matcher,
+        koreanNumberEnabled: Boolean,
+    ): String? {
+        val macroMatcher = macroPattern.matcher(template)
+        val result = StringBuilder(template.length + 16)
+        var cursor = 0
 
-    private fun toKoreanOrNull(raw: String): String? {
+        while (macroMatcher.find()) {
+            result.append(template, cursor, macroMatcher.start())
+
+            val groupIndex = macroMatcher.group(1).toIntOrNull() ?: return null
+            if (groupIndex < 0 || groupIndex > match.groupCount()) return null
+
+            val raw = match.group(groupIndex).orEmpty()
+            val value = if (koreanNumberEnabled) toKorean(raw) else raw
+
+            // Keep ordinary Java replacement syntax ($1 etc.) in the rest of the template,
+            // while ensuring the macro-expanded text is treated literally.
+            result.append(Matcher.quoteReplacement(value))
+            cursor = macroMatcher.end()
+        }
+
+        result.append(template, cursor, template.length)
+        return result.toString()
+    }
+
+    fun toKorean(raw: String): String {
         val original = raw.trim()
-        if (original.isEmpty() || !validNumberPattern.matcher(original).matches()) return null
+        if (original.isEmpty() || !validNumberPattern.matcher(original).matches()) return raw
 
         var token = original
         val sign =
@@ -73,17 +104,13 @@ object TtsKoreanNumber {
         val integerPart = if (dotIndex >= 0) normalized.substring(0, dotIndex) else normalized
         val fractionPart = if (dotIndex >= 0) normalized.substring(dotIndex + 1) else null
 
-        // Preserve code-like leading-zero integers such as 001, 010, 007.
-        // Decimal 0.xxx is still normalized normally.
-        if (fractionPart == null && integerPart.length > 1 && integerPart.startsWith('0')) return null
-
         val integerText = readInteger(integerPart)
         val fractionText =
             fractionPart?.let { digits ->
                 buildString {
                     append("점")
                     digits.forEach { digit ->
-                        if (digit !in '0'..'9') return null
+                        if (digit !in '0'..'9') return raw
                         append(digitNames[digit - '0'])
                     }
                 }
@@ -116,7 +143,6 @@ object TtsKoreanNumber {
                 val chunkText = readFourDigits(chunk)
                 val largeUnit = largeUnits[index]
 
-                // 10,000 is normally read "만", while 억/조 normally keep "일".
                 if (index == 1 && chunkText == "일" && index == highestNonZeroChunk) {
                     append(largeUnit)
                 } else {

@@ -5,23 +5,16 @@ import java.util.regex.Pattern
 
 /**
  * Single execution path for TTS regex rules.
- *
- * Regex replacements use only ordinary Java replacement syntax ($1, $2 ...).
- * There is no custom ${ko-number:N} replacement language anymore.
- * If Korean-number normalization is enabled, the completed regex result is
- * normalized once by TtsKoreanNumber.normalizeText().
+ * Both MainActivity playback and the regex-settings preview use this object,
+ * so `${ko-number:N}` behaves identically in both places.
  */
 object TtsRegexEngine {
-    private val legacyKoNumberMacro = Regex("""\$\{ko-number:(\d+)}""")
-
-    private fun normalizeLegacyReplacement(replacement: String): String =
-        legacyKoNumberMacro.replace(replacement) { match ->
-            "\$${match.groupValues[1]}"
-        }
+    private val koreanNumberMacroPattern = Regex("""\$\{ko-number:\d+}""")
 
     data class CompiledRule(
         val pattern: Pattern,
         val replacement: String,
+        val useKoreanNumberMacro: Boolean,
     )
 
     fun compile(rules: List<TtsRegexRule>): List<CompiledRule> =
@@ -44,13 +37,14 @@ object TtsRegexEngine {
                         }
                     val replacement =
                         if (rule.isRegex) {
-                            normalizeLegacyReplacement(rule.replacement)
+                            rule.replacement
                         } else {
                             Matcher.quoteReplacement(rule.replacement)
                         }
                     CompiledRule(
                         pattern = Pattern.compile(patternText, flags),
                         replacement = replacement,
+                        useKoreanNumberMacro = rule.isRegex && koreanNumberMacroPattern.containsMatchIn(rule.replacement),
                     )
                 }.getOrNull()
             }.toList()
@@ -72,15 +66,22 @@ object TtsRegexEngine {
         for (rule in rules) {
             result =
                 try {
-                    rule.pattern.matcher(result).replaceAll(rule.replacement)
+                    if (rule.useKoreanNumberMacro) {
+                        TtsKoreanNumber.replaceAll(
+                            pattern = rule.pattern,
+                            input = result,
+                            replacement = rule.replacement,
+                            koreanNumberEnabled = koreanNumberEnabled,
+                        )
+                    } else {
+                        rule.pattern.matcher(result).replaceAll(rule.replacement)
+                    }
                 } catch (_: Throwable) {
-                    // User-editable rules must not terminate playback or settings.
+                    // User-editable rules must not terminate playback or the settings screen.
                     result
                 }
         }
 
-        result = result.trim()
-        if (!koreanNumberEnabled || result.isEmpty()) return result
-        return TtsKoreanNumber.normalizeText(result).trim()
+        return result.trim()
     }
 }
