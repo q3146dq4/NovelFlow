@@ -274,81 +274,6 @@
     return result;
   }
 
-  function normalizePronunciation(text) {
-    let res = text;
-
-    res = res.replace(
-      /([0-9]+),([0-9]+)/g,
-      "$1점$2"
-    );
-
-    res = res.replace(
-      /([0-9.,]+)\s*\/\s*([0-9.,]+)/g,
-      "$2분의 $1"
-    );
-
-    res = res.replace(
-      /([0-9.,]+)\s*%/g,
-      "$1퍼센트"
-    );
-
-    res = res.replace(
-      /([0-9.,]+)\s*\$/g,
-      "$1달러"
-    );
-
-    res = res.replace(
-      /([0-9.,]+)\s*¥/g,
-      "$1엔"
-    );
-
-    res = res.replace(
-      /([0-9.,]+)\s*€/g,
-      "$1유로"
-    );
-
-    res = res.replace(
-      /([0-9.,]+)\s*kg/gi,
-      "$1킬로그램"
-    );
-
-    res = res.replace(
-      /([0-9.,]+)\s*km/gi,
-      "$1킬로미터"
-    );
-
-    res = res.replace(
-      /([0-9.,]+)\s*cm/gi,
-      "$1센티미터"
-    );
-
-    res = res.replace(
-      /([0-9.,]+)\s*mm/gi,
-      "$1밀리미터"
-    );
-
-    res = res.replace(
-      /([0-9.,]+)\s*m\b/gi,
-      "$1미터"
-    );
-
-    res = res.replace(
-      /([0-9.,]+)\s*g\b/gi,
-      "$1그램"
-    );
-
-    res = res.replace(
-      /([0-9.,]+)\s*[lL]\b/g,
-      "$1리터"
-    );
-
-    res = res.replace(
-      /([0-9.,]+)\s*ml/gi,
-      "$1밀리리터"
-    );
-
-    return res;
-  }
 
   function getLineElements() {
     return Array.from(
@@ -461,9 +386,7 @@
       sentences: state.sentences.map(
         (item) => ({
           line: item.line,
-          text: normalizePronunciation(
-            item.text
-          ),
+          text: item.sourceText || item.text,
         })
       ),
     });

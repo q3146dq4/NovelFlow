@@ -5,6 +5,9 @@
 -keepclassmembers class com.NovelRegEx.app.activity.MainActivity$FilterCssInterface {
   @android.webkit.JavascriptInterface <methods>;
 }
+-keepclassmembers class com.NovelRegEx.app.activity.MainActivity$TtsJavascriptInterface {
+  @android.webkit.JavascriptInterface <methods>;
+}
 # Preferences
 -keep class androidx.preference.** { *; }
 # Keep R8 from breaking coroutines

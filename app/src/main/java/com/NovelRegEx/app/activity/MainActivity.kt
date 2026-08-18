@@ -116,7 +116,32 @@ class MainActivity : AppCompatActivity() {
     private const val DEFAULT_START_PAGE_URL = "https://novelpia.com/mybook"
     private const val MAX_SCROLL_CACHE = 10
     private const val START_PAGE_KEY = "start_page"
-    private const val VIEWER_URL_PART = "novelpia.com/viewer/"
+    private val TRUSTED_DOCUMENT_ORIGINS =
+      setOf(
+        "https://novelpia.com",
+        "https://*.novelpia.com",
+      )
+  }
+
+  private fun isNovelpiaHost(host: String?): Boolean {
+    val normalized = host?.trimEnd('.')?.lowercase(Locale.US) ?: return false
+    return normalized == "novelpia.com" || normalized.endsWith(".novelpia.com")
+  }
+
+  private fun isNovelpiaUrl(url: String?): Boolean {
+    if (url.isNullOrBlank()) return false
+    return runCatching {
+      val uri = android.net.Uri.parse(url)
+      uri.scheme.equals("https", ignoreCase = true) && isNovelpiaHost(uri.host)
+    }.getOrDefault(false)
+  }
+
+  private fun isViewerUrl(url: String?): Boolean {
+    if (!isNovelpiaUrl(url)) return false
+    return runCatching {
+      val path = android.net.Uri.parse(url).path.orEmpty()
+      path == "/viewer" || path.startsWith("/viewer/")
+    }.getOrDefault(false)
   }
 
   private data class TtsSentence(val line: Int, val text: String)
@@ -142,11 +167,16 @@ class MainActivity : AppCompatActivity() {
     val rolling: Boolean = true,
   )
 
+  private data class CompiledTtsRule(
+    val pattern: java.util.regex.Pattern,
+    val replacement: String,
+  )
+
   inner class ScrollRestoreInterface {
     @Suppress("unused")
     @JavascriptInterface
     fun getScrollY(url: String): Int {
-      if (!restoringFromViewer) return 0
+      if (!isNovelpiaUrl(url) || !restoringFromViewer) return 0
       restoringFromViewer = false
       return scrollPositions[url] ?: 0
     }
@@ -156,6 +186,7 @@ class MainActivity : AppCompatActivity() {
     @Suppress("unused")
     @JavascriptInterface
     fun getCosmetic(url: String): String {
+      if (!isNovelpiaUrl(url)) return "{\"css\":\"\",\"selectors\":[]}"
       val cosmetic = filterRuntime.getCosmeticForUrl(url)
       return org.json.JSONObject()
         .put("css", cosmetic.css)
@@ -164,19 +195,21 @@ class MainActivity : AppCompatActivity() {
     }
   }
 
-  inner class TtsRegexJavascriptInterface {
-    @Suppress("unused")
-    @JavascriptInterface
-    fun getRulesJson(): String = TtsRegexStore.exportJson(this@MainActivity)
-  }
-
   inner class TtsJavascriptInterface {
     @Suppress("unused")
     @JavascriptInterface
-    fun open() { runOnUiThread { ttsController.openAndStart() } }
+    fun open() {
+      runOnUiThread {
+        if (isViewerUrl(webView.url)) ttsController.openAndStart()
+      }
+    }
     @Suppress("unused")
     @JavascriptInterface
-    fun stop() { runOnUiThread { ttsController.stop() } }
+    fun stop() {
+      runOnUiThread {
+        if (isNovelpiaUrl(webView.url)) ttsController.stop()
+      }
+    }
   }
 
   @SuppressLint("SetJavaScriptEnabled", "RequiresFeature")
@@ -214,7 +247,8 @@ class MainActivity : AppCompatActivity() {
     if (savedInstanceState != null) {
       webView.restoreState(savedInstanceState)
     } else {
-      webView.loadUrl(intent?.data?.toString() ?: getStartPageUrl())
+      val requestedUrl = intent?.data?.toString()
+      webView.loadUrl(requestedUrl?.takeIf(::isNovelpiaUrl) ?: getStartPageUrl())
     }
     setupBackHandler()
   }
@@ -247,11 +281,10 @@ class MainActivity : AppCompatActivity() {
     webView.addJavascriptInterface(ScrollRestoreInterface(), "_ScrollRestore")
     webView.addJavascriptInterface(FilterCssInterface(), "_AdFilter")
     webView.addJavascriptInterface(TtsJavascriptInterface(), "_NPTTS")
-    webView.addJavascriptInterface(TtsRegexJavascriptInterface(), "NPTtsRegex")
 
     if (supportsDocumentStartScript) {
       documentStartScripts.forEach { script ->
-        WebViewCompat.addDocumentStartJavaScript(webView, script, setOf("*"))
+        WebViewCompat.addDocumentStartJavaScript(webView, script, TRUSTED_DOCUMENT_ORIGINS)
       }
     }
 
@@ -264,7 +297,7 @@ class MainActivity : AppCompatActivity() {
 
     webView.webViewClient = object : WebViewClient() {
       override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
-        currentPageIsViewer = url?.contains(VIEWER_URL_PART) == true
+        currentPageIsViewer = isViewerUrl(url)
         visibleViewerReady = false
         if (currentPageIsViewer) {
           ttsController.markPageStarted(url)
@@ -276,7 +309,7 @@ class MainActivity : AppCompatActivity() {
 
       override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
         super.doUpdateVisitedHistory(view, url, isReload)
-        currentPageIsViewer = url?.contains(VIEWER_URL_PART) == true
+        currentPageIsViewer = isViewerUrl(url)
         if (!currentPageIsViewer) ttsController.close()
       }
 
@@ -287,12 +320,12 @@ class MainActivity : AppCompatActivity() {
       }
 
       override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-        val host = request.url.host ?: return false
-        if (host.endsWith("novelpia.com")) {
+        val uri = request.url
+        if (uri.scheme.equals("https", ignoreCase = true) && isNovelpiaHost(uri.host)) {
           saveScrollPosition()
           return false
         }
-        startActivity(Intent(Intent.ACTION_VIEW, request.url))
+        startActivity(Intent(Intent.ACTION_VIEW, uri))
         return true
       }
 
@@ -304,7 +337,7 @@ class MainActivity : AppCompatActivity() {
           withContext(Dispatchers.IO) { filterRuntime.preparePage(url) }
           if (view.url != url) return@launch
 
-          if (url.contains(VIEWER_URL_PART)) {
+          if (isViewerUrl(url)) {
             installTtsScript(view)
             injectBottomListenButton(view)
             visibleViewerReady = true
@@ -405,14 +438,14 @@ class MainActivity : AppCompatActivity() {
     preloadWebView.webViewClient = object : WebViewClient() {
       override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
         super.onPageStarted(view, url, favicon)
-        if (url?.contains(VIEWER_URL_PART) != true) {
+        if (!isViewerUrl(url)) {
           ttsController.clearPreloadedChapter()
         }
       }
 
       override fun onPageFinished(view: WebView, url: String?) {
         super.onPageFinished(view, url)
-        if (url?.contains(VIEWER_URL_PART) != true) return
+        if (!isViewerUrl(url)) return
         installTtsScript(view)
         ttsController.onPreloadPageFinished(url)
       }
@@ -462,7 +495,7 @@ class MainActivity : AppCompatActivity() {
 
   private fun goBackInWebView() {
     if (!webView.canGoBack()) return
-    if (webView.url?.contains(VIEWER_URL_PART) == true) restoringFromViewer = true
+    if (webView.isViewerUrl(url)) restoringFromViewer = true
     saveScrollPosition()
     webView.goBack()
   }
@@ -582,7 +615,7 @@ class MainActivity : AppCompatActivity() {
     onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
       override fun handleOnBackPressed() {
         if (webView.canGoBack()) {
-          if (webView.url?.contains(VIEWER_URL_PART) == true) restoringFromViewer = true
+          if (webView.isViewerUrl(url)) restoringFromViewer = true
           saveScrollPosition()
           webView.goBack()
           return
@@ -602,7 +635,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     val url = webView.url ?: ""
-    if (url.contains(VIEWER_URL_PART)) {
+    if (isViewerUrl(url)) {
       val prefs = PreferenceManager.getDefaultSharedPreferences(this)
       if (prefs.getString("volume_behavior", "move_page") == "move_page") {
         val upPrev = prefs.getString("volume_direction", "up_prev") == "up_prev"
@@ -622,21 +655,27 @@ class MainActivity : AppCompatActivity() {
 
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
-    intent.data?.let { webView.loadUrl(it.toString()) }
+    intent.data
+      ?.toString()
+      ?.takeIf(::isNovelpiaUrl)
+      ?.let { webView.loadUrl(it) }
   }
 
   override fun onResume() {
     super.onResume()
     keepWebViewTimersRunning()
     if (::preloadWebView.isInitialized) preloadWebView.onResume()
+    ttsController.refreshCompiledTtsRules()
     val prefs = PreferenceManager.getDefaultSharedPreferences(this)
     swipeRefresh.triggerFraction = prefs.getString("swipe_fraction", null)?.toFloatOrNull() ?: TopSwipeRefreshLayout.DEFAULT_TRIGGER_FRACTION
   }
 
   override fun onPause() {
-    // Intentionally do not call webView.onPause() here. Keeping the WebView
-    // resumed prevents screen-off binge playback from suspending its page
-    // timers/JavaScript while the app continues to hold the playback WakeLock.
+    // Keep WebView JavaScript alive only while TTS/binge/preload actually needs it.
+    if (!ttsController.needsBackgroundWebView()) {
+      webView.onPause()
+      if (::preloadWebView.isInitialized) preloadWebView.onPause()
+    }
     super.onPause()
   }
 
@@ -659,7 +698,7 @@ class MainActivity : AppCompatActivity() {
 
   private fun saveScrollPosition() {
     val url = webView.url ?: return
-    if (url.contains(VIEWER_URL_PART)) return
+    if (isViewerUrl(url)) return
     if (scrollPositions.size >= MAX_SCROLL_CACHE && !scrollPositions.containsKey(url)) { scrollPositions.remove(scrollPositions.keys.first()) }
     scrollPositions[url] = webView.scrollY
   }
@@ -717,6 +756,9 @@ class MainActivity : AppCompatActivity() {
     private var preloadCollectRetry = 0
     private var preloadInFlight = false
 
+    private var compiledTtsRules: List<CompiledTtsRule> = emptyList()
+    private val speakableContentRegex = Regex("[가-힣a-zA-Z0-9]")
+
     @Suppress("DEPRECATION")
     private val wifiLock: WifiManager.WifiLock =
       (applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager).createWifiLock(
@@ -733,18 +775,27 @@ class MainActivity : AppCompatActivity() {
         setReferenceCounted(false)
       }
 
-    private fun syncPlaybackWakeLock() {
-      val shouldHold = active || waitingForNextChapter
-      if (shouldHold) {
+    private fun syncPlaybackLocks() {
+      val shouldHoldCpu = active || waitingForNextChapter
+      val shouldHoldWifi = preloadInFlight || waitingForNextChapter
+
+      if (shouldHoldCpu) {
         if (!playbackWakeLock.isHeld) playbackWakeLock.acquire()
-        try { if (!wifiLock.isHeld) wifiLock.acquire() } catch (_: Throwable) {}
-      } else {
-        if (playbackWakeLock.isHeld) playbackWakeLock.release()
-        try { if (wifiLock.isHeld) wifiLock.release() } catch (_: Throwable) {}
+      } else if (playbackWakeLock.isHeld) {
+        playbackWakeLock.release()
       }
+
+      try {
+        if (shouldHoldWifi) {
+          if (!wifiLock.isHeld) wifiLock.acquire()
+        } else if (wifiLock.isHeld) {
+          wifiLock.release()
+        }
+      } catch (_: Throwable) {}
     }
 
-    init { 
+    init {
+      refreshCompiledTtsRules()
       textToSpeech = TextToSpeech(this@MainActivity, this) 
       
       mediaSession = MediaSession(this@MainActivity, "NovelTtsSession").apply {
@@ -806,7 +857,10 @@ class MainActivity : AppCompatActivity() {
       preloadInFlight = false
     }
 
-    fun clearPreloadedChapter() = clearPreloadState()
+    fun clearPreloadedChapter() {
+      clearPreloadState()
+      syncPlaybackLocks()
+    }
 
     fun prepareNextChapterPreload() {
       if (!bingeMode || !currentPageIsViewer || preloadInFlight || preloadedChapterJson != null) return
@@ -831,9 +885,10 @@ class MainActivity : AppCompatActivity() {
       webView.evaluateJavascript(script) { result ->
         mainHandler.post {
           val url = runCatching { JSONTokener(result ?: "\"\"").nextValue() as? String }.getOrNull().orEmpty()
-          if (url.isBlank() || !url.contains(VIEWER_URL_PART)) return@post
+          if (url.isBlank() || !isViewerUrl(url)) return@post
           if (url == webView.url) return@post
           preloadInFlight = true
+          syncPlaybackLocks()
           preloadedChapterUrl = url
           preloadedChapterJson = null
           preloadCollectRetry = 0
@@ -859,6 +914,7 @@ class MainActivity : AppCompatActivity() {
             if (count > 0) {
               preloadedChapterJson = decoded
               preloadInFlight = false
+              syncPlaybackLocks()
               if (waitingForNextChapter) {
                 mainHandler.post { tryStartFromPreloadedChapter() }
               }
@@ -870,6 +926,7 @@ class MainActivity : AppCompatActivity() {
             mainHandler.postDelayed({ tryCollectPreloadedChapter() }, 250L)
           } else {
             preloadInFlight = false
+            syncPlaybackLocks()
           }
         }
       }
@@ -888,7 +945,7 @@ class MainActivity : AppCompatActivity() {
       preloadInFlight = false
       active = true
       paused = false
-      syncPlaybackWakeLock()
+      syncPlaybackLocks()
       webView.loadUrl(url)
       applyCollectedJsonAndStart(json, true)
       mainHandler.postDelayed({ prepareNextChapterPreload() }, 1500L)
@@ -927,8 +984,37 @@ class MainActivity : AppCompatActivity() {
       } catch (_: Throwable) {}
     }
 
+    fun refreshCompiledTtsRules() {
+      compiledTtsRules =
+        TtsRegexStore
+          .load(this@MainActivity)
+          .asSequence()
+          .filter { it.enabled && it.pattern.isNotBlank() }
+          .mapNotNull { rule ->
+            runCatching {
+              val flags =
+                if (rule.ignoreCase) {
+                  java.util.regex.Pattern.CASE_INSENSITIVE or java.util.regex.Pattern.UNICODE_CASE
+                } else {
+                  java.util.regex.Pattern.UNICODE_CASE
+                }
+              val patternText =
+                if (rule.isRegex) rule.pattern else java.util.regex.Pattern.quote(rule.pattern)
+              val replacement =
+                if (rule.isRegex) rule.replacement else java.util.regex.Matcher.quoteReplacement(rule.replacement)
+              CompiledTtsRule(
+                java.util.regex.Pattern.compile(patternText, flags),
+                replacement,
+              )
+            }.getOrNull()
+          }.toList()
+    }
+
+    fun needsBackgroundWebView(): Boolean = active || waitingForNextChapter || preloadInFlight
+
     fun openAndStart() {
       if (!currentPageIsViewer) return
+      refreshCompiledTtsRules()
       ensureOverlay()
       showOverlay(true)
       if (!ttsReady) {
@@ -1018,7 +1104,7 @@ class MainActivity : AppCompatActivity() {
             } else {
               waitingForNextChapter = false
             }
-            syncPlaybackWakeLock()
+            syncPlaybackLocks()
             advanceGeneration()
             updatePlayButton()
             speakNext()
@@ -1067,92 +1153,28 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 화면에 표시되는 원문은 건드리지 않고, 실제 TTS에 넘길 문자열만 정리한다.
-     * 사용자 정규식 -> 숫자/기호 발음 정규화 순서로 적용한다.
+     * Apply the enabled TTS-regex list from top to bottom.
+     * Pronunciation, units, fractions, decimals and whitespace normalization are
+     * all editable default user rules in TtsRegexStore; there is no hidden second pass.
      */
     private fun prepareTtsText(original: String): String {
       var result = original.trim()
       if (result.isEmpty()) return result
 
-      // 1) 사용자 정규식 적용
-      for (rule in TtsRegexStore.load(this@MainActivity)) {
-        if (!rule.enabled || rule.pattern.isBlank()) continue
-
-        result = try {
-          val flags = if (rule.ignoreCase) {
-            java.util.regex.Pattern.CASE_INSENSITIVE or java.util.regex.Pattern.UNICODE_CASE
-          } else {
-            java.util.regex.Pattern.UNICODE_CASE
+      for (rule in compiledTtsRules) {
+        result =
+          try {
+            rule.pattern.matcher(result).replaceAll(rule.replacement)
+          } catch (_: Exception) {
+            result
           }
-
-          val pattern = if (rule.isRegex) {
-            java.util.regex.Pattern.compile(rule.pattern, flags)
-          } else {
-            java.util.regex.Pattern.compile(
-              java.util.regex.Pattern.quote(rule.pattern),
-              flags
-            )
-          }
-
-          val replacement = if (rule.isRegex) {
-            rule.replacement
-          } else {
-            java.util.regex.Matcher.quoteReplacement(rule.replacement)
-          }
-          pattern.matcher(result).replaceAll(replacement)
-        } catch (_: Exception) {
-          // 잘못된 사용자 규칙 하나 때문에 TTS 전체가 멈추지 않게 무시한다.
-          result
-        }
       }
 
-      // 2) 사이트 UI 잔재/불필요한 공백 정리
-      result = result
-        .replace(Regex("[\\u200B\\u00A0]"), "")
-        .replace(Regex("[\\t\\r\\n]+"), " ")
-        .replace(Regex("\\s{2,}"), " ")
-        .trim()
-
-      // 3) 분수/슬래시는 한국어 TTS가 안정적으로 읽도록 명시적으로 변환한다.
-      //    예: 3.1/100 -> 3.1 나누기 100
-      result = result.replace(
-        Regex("([0-9]+(?:[.,][0-9]+)?)\\s*/\\s*([0-9]+(?:[.,][0-9]+)?)"),
-        "\$1 나누기 \$2"
-      )
-
-      // 4) 소수점은 '점'으로 명시한다. 3.1 -> 3 점 1
-      result = result.replace(
-        Regex("(?<![0-9])([0-9]+)\\.([0-9]+)(?![0-9])"),
-        "\$1 점 \$2"
-      )
-
-      // 5) 천 단위 쉼표 제거: 1,000 -> 1000
-      result = result.replace(
-        Regex("(?<=\\d),(?=\\d{3}(?:\\D|$))"),
-        ""
-      )
-
-      // 6) 기존 발음 치환
-      result = result
-        .replace(Regex("([0-9.]+)\\s*%"), "${'$'}1 퍼센트")
-        .replace(Regex("([0-9.]+)\\s*\\$"), "${'$'}1 달러")
-        .replace(Regex("([0-9.]+)\\s*¥"), "${'$'}1 엔")
-        .replace(Regex("([0-9.]+)\\s*€"), "${'$'}1 유로")
-        .replace(Regex("([0-9.]+)\\s*kg", RegexOption.IGNORE_CASE), "${'$'}1 킬로그램")
-        .replace(Regex("([0-9.]+)\\s*km", RegexOption.IGNORE_CASE), "${'$'}1 킬로미터")
-        .replace(Regex("([0-9.]+)\\s*cm", RegexOption.IGNORE_CASE), "${'$'}1 센티미터")
-        .replace(Regex("([0-9.]+)\\s*mm", RegexOption.IGNORE_CASE), "${'$'}1 밀리미터")
-        .replace(Regex("([0-9.]+)\\s*m\\b", RegexOption.IGNORE_CASE), "${'$'}1 미터")
-        .replace(Regex("([0-9.]+)\\s*g\\b", RegexOption.IGNORE_CASE), "${'$'}1 그램")
-        .replace(Regex("([0-9.]+)\\s*ml\\b", RegexOption.IGNORE_CASE), "${'$'}1 밀리리터")
-        .replace(Regex("([0-9.]+)\\s*l\\b", RegexOption.IGNORE_CASE), "${'$'}1 리터")
-
-      return result
-        .replace(Regex("\\s{2,}"), " ")
-        .trim()
+      return result.trim()
     }
 
-    private fun hasSpeakableContent(text: String): Boolean = Regex("[가-힣a-zA-Z0-9]").containsMatchIn(text)
+    private fun hasSpeakableContent(text: String): Boolean =
+      speakableContentRegex.containsMatchIn(text)
 
     private fun splitAtCommas(text: String): List<String> {
       val result = mutableListOf<String>()
@@ -1311,7 +1333,7 @@ class MainActivity : AppCompatActivity() {
       queueMode: Int = TextToSpeech.QUEUE_FLUSH,
     ) {
       if (!active || paused || currentChunkIndex !in playbackChunks.indices) return
-      syncPlaybackWakeLock()
+      syncPlaybackLocks()
 
       val chunkIndex = currentChunkIndex
       val chunk =
@@ -1417,17 +1439,8 @@ class MainActivity : AppCompatActivity() {
             rolling = true,
           )
         if (enqueued == null) {
-          val failedIndex = nextIndex
-          val failedChunk = chunk
-          mainHandler.post {
-            if (!active || paused || failedIndex !in playbackChunks.indices) return@post
-            textToSpeech?.stop()
-            currentChunkIndex = failedIndex
-            currentSentenceIndex = failedChunk.startSentenceIndex
-            currentSentencePartIndex = failedChunk.commaPartIndex ?: 0
-            clearQueuedSpeechState()
-            handleChunkFailure(failedChunk)
-          }
+          // Tail pre-queue is speculative: do not interrupt audio that is already playing.
+          // A missing immediate next chunk is retried from onDone().
           return
         }
         nextIndex++
@@ -1557,12 +1570,35 @@ class MainActivity : AppCompatActivity() {
           return@post
         }
 
-        // 다음 청크는 Android TTS 큐가 바로 이어 재생한다. 끝난 만큼 맨 뒤에 하나를 보충한다.
+        // Android TTS normally starts the already queued next chunk immediately.
+        // If speculative pre-queue previously failed before the immediate next chunk,
+        // retry that head now instead of skipping it.
         if (request.chunkIndex >= playbackChunks.lastIndex) {
           finishEpisode()
           return@post
         }
-        fillRollingPreQueue(request.chunkIndex + 1)
+
+        val nextChunkIndex = request.chunkIndex + 1
+        val nextAlreadyQueued = queuedTtsRequests.values.any { it.chunkIndex == nextChunkIndex }
+        if (!nextAlreadyQueued) {
+          val nextChunk = playbackChunks[nextChunkIndex]
+          val enqueued =
+            enqueueTtsRequest(
+              chunkIndex = nextChunkIndex,
+              chunk = nextChunk,
+              queueMode = TextToSpeech.QUEUE_ADD,
+              rolling = true,
+            )
+          if (enqueued == null) {
+            currentChunkIndex = nextChunkIndex
+            currentSentenceIndex = nextChunk.startSentenceIndex
+            currentSentencePartIndex = nextChunk.commaPartIndex ?: 0
+            clearQueuedSpeechState()
+            handleChunkFailure(nextChunk)
+            return@post
+          }
+        }
+        fillRollingPreQueue(nextChunkIndex)
       }
     }
 
@@ -1629,7 +1665,7 @@ class MainActivity : AppCompatActivity() {
         nextChapterNavigationStarted = false
         pendingChapterFromUrl = webView.url
         textToSpeech?.stop()
-        syncPlaybackWakeLock()
+        syncPlaybackLocks()
         updatePlayButton()
         if (tryStartFromPreloadedChapter()) return
         requestNextChapter(0)
@@ -1637,7 +1673,7 @@ class MainActivity : AppCompatActivity() {
         active = false
         paused = false
         waitingForNextChapter = false
-        syncPlaybackWakeLock()
+        syncPlaybackLocks()
         updatePlayButton()
         progressView?.progress = 1f
       }
@@ -1677,7 +1713,7 @@ class MainActivity : AppCompatActivity() {
           if (!waitingForNextChapter) return@post
           val value = runCatching { JSONTokener(result ?: "\"\"").nextValue() as? String }.getOrNull().orEmpty()
           if (value.isNotBlank() && value != "CLICKED") {
-            if (value != currentUrl) {
+            if (value != currentUrl && isViewerUrl(value)) {
               nextChapterNavigationStarted = true
               webView.loadUrl(value)
               return@post
@@ -1711,7 +1747,7 @@ class MainActivity : AppCompatActivity() {
       textToSpeech?.stop()
       active = true
       paused = false
-      syncPlaybackWakeLock()
+      syncPlaybackLocks()
       speakNext()
     }
 
@@ -1722,7 +1758,7 @@ class MainActivity : AppCompatActivity() {
       textToSpeech?.stop()
       active = true
       paused = false
-      syncPlaybackWakeLock()
+      syncPlaybackLocks()
       speakNext()
     }
 
@@ -1734,7 +1770,7 @@ class MainActivity : AppCompatActivity() {
         } else {
           active = true
           paused = false
-          syncPlaybackWakeLock()
+          syncPlaybackLocks()
           advanceGeneration()
           if (currentChunkIndex in playbackChunks.indices) {
             speakCurrent()
@@ -1750,7 +1786,7 @@ class MainActivity : AppCompatActivity() {
       if (paused) {
         paused = false
         active = true
-        syncPlaybackWakeLock()
+        syncPlaybackLocks()
         advanceGeneration()
         if (currentChunkIndex in playbackChunks.indices) {
           speakCurrent()
@@ -1764,7 +1800,7 @@ class MainActivity : AppCompatActivity() {
       // 재생 중 -> 일시정지
       paused = true
       active = false
-      syncPlaybackWakeLock()
+      syncPlaybackLocks()
       advanceGeneration()
       textToSpeech?.stop()
       updatePlayButton()
@@ -1972,7 +2008,7 @@ class MainActivity : AppCompatActivity() {
       clearPreloadState()
       active = false
       paused = false
-      syncPlaybackWakeLock()
+      syncPlaybackLocks()
       nextChapterNavigationStarted = false
       pendingChapterFromUrl = null
       startPending = false

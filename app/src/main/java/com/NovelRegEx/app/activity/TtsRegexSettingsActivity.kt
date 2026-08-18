@@ -515,57 +515,23 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
                 } else {
                     Pattern.UNICODE_CASE
                 }
-
                 val pattern = if (rule.isRegex) {
                     Pattern.compile(rule.pattern, flags)
                 } else {
                     Pattern.compile(Pattern.quote(rule.pattern), flags)
                 }
-
                 val replacement = if (rule.isRegex) {
-            rule.replacement
-          } else {
-            java.util.regex.Matcher.quoteReplacement(rule.replacement)
-          }
-          pattern.matcher(result).replaceAll(replacement)
-            } catch (e: Exception) {
+                    rule.replacement
+                } else {
+                    java.util.regex.Matcher.quoteReplacement(rule.replacement)
+                }
+                pattern.matcher(result).replaceAll(replacement)
+            } catch (_: Exception) {
                 result
             }
         }
 
-        result = result
-            .replace(Regex("[\\u200B\\u00A0]"), "")
-            .replace(Regex("[\\t\\r\\n]+"), " ")
-            .replace(Regex("\\s{2,}"), " ")
-            .trim()
-
-        // 3.1/100 -> 3.1 나누기 100
-        result = result.replace(
-            Regex("([0-9]+(?:[.,][0-9]+)?)\\s*/\\s*([0-9]+(?:[.,][0-9]+)?)"),
-            "\$1 나누기 \$2"
-        )
-
-        // 3.1 -> 3 점 1
-        result = result.replace(
-            Regex("(?<![0-9])([0-9]+)\\.([0-9]+)(?![0-9])"),
-            "\$1 점 \$2"
-        )
-
-        result = result
-            .replace(Regex("(?<=\\d),(?=\\d{3}(?:\\D|$))"), "")
-            .replace(Regex("([0-9.]+)\\s*%"), "${'$'}1 퍼센트")
-            .replace(Regex("([0-9.]+)\\s*kg", RegexOption.IGNORE_CASE), "${'$'}1 킬로그램")
-            .replace(Regex("([0-9.]+)\\s*km", RegexOption.IGNORE_CASE), "${'$'}1 킬로미터")
-            .replace(Regex("([0-9.]+)\\s*cm", RegexOption.IGNORE_CASE), "${'$'}1 센티미터")
-            .replace(Regex("([0-9.]+)\\s*mm", RegexOption.IGNORE_CASE), "${'$'}1 밀리미터")
-            .replace(Regex("([0-9.]+)\\s*m\\b", RegexOption.IGNORE_CASE), "${'$'}1 미터")
-            .replace(Regex("([0-9.]+)\\s*g\\b", RegexOption.IGNORE_CASE), "${'$'}1 그램")
-            .replace(Regex("([0-9.]+)\\s*ml\\b", RegexOption.IGNORE_CASE), "${'$'}1 밀리리터")
-            .replace(Regex("([0-9.]+)\\s*l\\b", RegexOption.IGNORE_CASE), "${'$'}1 리터")
-
-        return result
-            .replace(Regex("\\s{2,}"), " ")
-            .trim()
+        return result.trim()
     }
 
     // ============================================================

@@ -48,10 +48,15 @@ jobs:
       - name: Verify APK
         shell: bash
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          APK="apk/NovelRegEx-v${TAG}.apk"
-          test -f "$APK" || { echo "Release APK not found: $APK"; exit 1; }
-          unzip -t "$APK" >/dev/null
+          shopt -s nullglob
+          APKS=(apk/NovelRegEx-*.apk)
+          if (( ${#APKS[@]} != 1 )); then
+            echo "Expected exactly one release APK, found ${#APKS[@]}"
+            printf '%s\n' "${APKS[@]}"
+            exit 1
+          fi
+          unzip -t "${APKS[0]}" >/dev/null
+          echo "Verified: ${APKS[0]}"
 
       - name: Upload release APK artifact
         uses: actions/upload-artifact@v4

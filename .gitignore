@@ -810,3 +810,8 @@ FodyWeavers.xsd
 apk/
 .claude/
 .tools/
+
+# Local NovelRegEx development files
+.novelregex-backup/
+NovelRegEx-improvements-v4/
+NovelRegEx-improvements-v4.1/
