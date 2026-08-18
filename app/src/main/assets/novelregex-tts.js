@@ -386,7 +386,7 @@
       sentences: state.sentences.map(
         (item) => ({
           line: item.line,
-          text: item.sourceText || item.text,
+          text: item.text,
         })
       ),
     });
