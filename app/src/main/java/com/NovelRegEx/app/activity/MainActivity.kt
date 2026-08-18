@@ -445,9 +445,10 @@ class MainActivity : AppCompatActivity() {
 
       override fun onPageFinished(view: WebView, url: String?) {
         super.onPageFinished(view, url)
-        if (!isViewerUrl(url)) return
+        val pageUrl = url ?: return
+        if (!isViewerUrl(pageUrl)) return
         installTtsScript(view)
-        ttsController.onPreloadPageFinished(url)
+        ttsController.onPreloadPageFinished(pageUrl)
       }
     }
     findViewById<android.widget.FrameLayout>(R.id.main).addView(
@@ -495,7 +496,7 @@ class MainActivity : AppCompatActivity() {
 
   private fun goBackInWebView() {
     if (!webView.canGoBack()) return
-    if (webView.isViewerUrl(url)) restoringFromViewer = true
+    if (isViewerUrl(webView.url)) restoringFromViewer = true
     saveScrollPosition()
     webView.goBack()
   }
@@ -615,7 +616,7 @@ class MainActivity : AppCompatActivity() {
     onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
       override fun handleOnBackPressed() {
         if (webView.canGoBack()) {
-          if (webView.isViewerUrl(url)) restoringFromViewer = true
+          if (isViewerUrl(webView.url)) restoringFromViewer = true
           saveScrollPosition()
           webView.goBack()
           return
