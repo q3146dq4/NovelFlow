@@ -20,8 +20,8 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.NovelRegEx.app.R
-import com.NovelRegEx.app.tts.TtsKoreanNumber
 import com.NovelRegEx.app.tts.TtsRegexRule
+import com.NovelRegEx.app.tts.TtsRegexEngine
 import com.NovelRegEx.app.tts.TtsRegexStore
 import java.util.Locale
 import java.util.UUID
@@ -558,51 +558,12 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
         return result
     }
 
-    private fun prepareSpeechText(original: String): String {
-        var result = original.trim()
-        if (result.isEmpty()) return result
-
-        val koreanNumberEnabled = TtsRegexStore.isKoreanNumberEnabled(this)
-
-        for (rule in rules) {
-            if (!rule.enabled || rule.pattern.isBlank()) continue
-
-            result =
-                try {
-                    val flags = if (rule.ignoreCase) {
-                        Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
-                    } else {
-                        Pattern.UNICODE_CASE
-                    }
-                    val pattern = if (rule.isRegex) {
-                        Pattern.compile(rule.pattern, flags)
-                    } else {
-                        Pattern.compile(Pattern.quote(rule.pattern), flags)
-                    }
-                    val replacement = if (rule.isRegex) {
-                        rule.replacement
-                    } else {
-                        java.util.regex.Matcher.quoteReplacement(rule.replacement)
-                    }
-
-                    if (rule.isRegex && rule.replacement.contains("\${ko-number:")) {
-                        TtsKoreanNumber.replaceAll(
-                            pattern,
-                            result,
-                            replacement,
-                            koreanNumberEnabled,
-                        )
-                    } else {
-                        pattern.matcher(result).replaceAll(replacement)
-                    }
-                } catch (_: Throwable) {
-                    // One bad user rule must not close the settings screen.
-                    result
-                }
-        }
-
-        return result.trim()
-    }
+    private fun prepareSpeechText(original: String): String =
+        TtsRegexEngine.apply(
+            original = original,
+            rules = rules,
+            koreanNumberEnabled = TtsRegexStore.isKoreanNumberEnabled(this),
+        )
 
     // ============================================================
     // TTS 테스트 재생

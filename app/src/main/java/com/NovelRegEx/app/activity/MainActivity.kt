@@ -57,8 +57,8 @@ import com.NovelRegEx.app.R
 import com.NovelRegEx.app.filter.FilterPreferences
 import com.NovelRegEx.app.filter.FilterRuntime
 import com.NovelRegEx.app.layout.TopSwipeRefreshLayout
-import com.NovelRegEx.app.tts.TtsKoreanNumber
 import com.NovelRegEx.app.tts.TtsPreferences
+import com.NovelRegEx.app.tts.TtsRegexEngine
 import com.NovelRegEx.app.tts.TtsRegexStore
 import com.NovelRegEx.app.update.UpdateChecker
 import com.NovelRegEx.app.update.UpdateNotifier
@@ -147,6 +147,11 @@ class MainActivity : AppCompatActivity() {
 
   private data class TtsSentence(val line: Int, val text: String)
 
+  private data class TtsStartAnchor(
+    val text: String,
+    val scrollFraction: Float,
+  )
+
   private data class TtsChunkPart(
     val sentenceIndex: Int,
     val start: Int,
@@ -166,12 +171,6 @@ class MainActivity : AppCompatActivity() {
     val chunk: TtsSpeechChunk,
     val resumeAfterChunkIndex: Int = chunkIndex,
     val rolling: Boolean = true,
-  )
-
-  private data class CompiledTtsRule(
-    val pattern: java.util.regex.Pattern,
-    val replacement: String,
-    val useSpecialReplacement: Boolean,
   )
 
   inner class ScrollRestoreInterface {
@@ -759,7 +758,7 @@ class MainActivity : AppCompatActivity() {
     private var preloadCollectRetry = 0
     private var preloadInFlight = false
 
-    private var compiledTtsRules: List<CompiledTtsRule> = emptyList()
+    private var compiledTtsRules: List<TtsRegexEngine.CompiledRule> = emptyList()
     private var koreanNumberNormalizationEnabled = true
     private val speakableContentRegex = Regex("[가-힣a-zA-Z0-9]")
 
@@ -991,29 +990,9 @@ class MainActivity : AppCompatActivity() {
     fun refreshCompiledTtsRules() {
       koreanNumberNormalizationEnabled = TtsRegexStore.isKoreanNumberEnabled(this@MainActivity)
       compiledTtsRules =
-        TtsRegexStore
-          .load(this@MainActivity)
-          .asSequence()
-          .filter { it.enabled && it.pattern.isNotBlank() }
-          .mapNotNull { rule ->
-            runCatching {
-              val flags =
-                if (rule.ignoreCase) {
-                  java.util.regex.Pattern.CASE_INSENSITIVE or java.util.regex.Pattern.UNICODE_CASE
-                } else {
-                  java.util.regex.Pattern.UNICODE_CASE
-                }
-              val patternText =
-                if (rule.isRegex) rule.pattern else java.util.regex.Pattern.quote(rule.pattern)
-              val replacement =
-                if (rule.isRegex) rule.replacement else java.util.regex.Matcher.quoteReplacement(rule.replacement)
-              CompiledTtsRule(
-                java.util.regex.Pattern.compile(patternText, flags),
-                replacement,
-                rule.isRegex && rule.replacement.contains("\${ko-number:"),
-              )
-            }.getOrNull()
-          }.toList()
+        TtsRegexEngine.compile(
+          TtsRegexStore.load(this@MainActivity),
+        )
     }
 
     fun needsBackgroundWebView(): Boolean = active || waitingForNextChapter || preloadInFlight
@@ -1030,19 +1009,88 @@ class MainActivity : AppCompatActivity() {
       }
       startPending = false
       retryCount = 0
-      collectAndStart(0, forNextChapter = false)
+      captureVisibleStartAnchor { anchor ->
+        if (currentPageIsViewer) {
+          collectAndStart(0, forNextChapter = false, startAnchor = anchor)
+        }
+      }
     }
 
-    private fun collectAndStart(retry: Int, forNextChapter: Boolean) {
+    private fun captureVisibleStartAnchor(onResult: (TtsStartAnchor) -> Unit) {
+      val js =
+        """
+        (function() {
+          try {
+            var scroller = document.scrollingElement || document.documentElement || document.body;
+            var maxScroll = Math.max(1, (scroller ? scroller.scrollHeight : 1) - window.innerHeight);
+            var scrollTop = scroller ? scroller.scrollTop : window.scrollY;
+            var fraction = Math.max(0, Math.min(1, scrollTop / maxScroll));
+            var ys = [0.45, 0.60, 0.30];
+            var text = '';
+
+            for (var i = 0; i < ys.length && !text; i++) {
+              var x = Math.max(1, window.innerWidth * 0.5);
+              var y = Math.max(1, window.innerHeight * ys[i]);
+              var range = document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
+              if (range && range.startContainer) {
+                var node = range.startContainer;
+                var raw = node.nodeType === 3 ? (node.nodeValue || '') : (node.textContent || '');
+                var offset = Math.max(0, Math.min(raw.length, range.startOffset || 0));
+                var from = Math.max(0, offset - 70);
+                var to = Math.min(raw.length, offset + 110);
+                text = raw.slice(from, to).replace(/\s+/g, ' ').trim();
+              }
+
+              if (!text) {
+                var element = document.elementFromPoint(x, y);
+                while (element && element !== document.body) {
+                  var candidate = (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim();
+                  if (candidate.length >= 2 && candidate.length <= 240) {
+                    text = candidate;
+                    break;
+                  }
+                  element = element.parentElement;
+                }
+              }
+            }
+
+            return JSON.stringify({ text: text, fraction: fraction });
+          } catch (e) {
+            return JSON.stringify({ text: '', fraction: 0 });
+          }
+        })();
+        """.trimIndent()
+
+      webView.evaluateJavascript(js) { rawResult ->
+        mainHandler.post {
+          val anchor =
+            runCatching {
+              val decoded = JSONTokener(rawResult ?: "\"\"").nextValue() as? String
+              val root = org.json.JSONObject(decoded.orEmpty())
+              TtsStartAnchor(
+                text = root.optString("text").trim(),
+                scrollFraction = root.optDouble("fraction", 0.0).toFloat().coerceIn(0f, 1f),
+              )
+            }.getOrElse { TtsStartAnchor("", 0f) }
+          onResult(anchor)
+        }
+      }
+    }
+
+    private fun collectAndStart(
+      retry: Int,
+      forNextChapter: Boolean,
+      startAnchor: TtsStartAnchor? = null,
+    ) {
       if (!currentPageIsViewer) return
       webView.evaluateJavascript("window.__npTts&&window.__npTts.collect()") { result ->
         mainHandler.post {
           if (result.isNullOrBlank() || result == "null" || result == "\"\"") {
             if (retry < 60) {
-              mainHandler.postDelayed({ collectAndStart(retry + 1, forNextChapter) }, 250L)
+              mainHandler.postDelayed({ collectAndStart(retry + 1, forNextChapter, startAnchor) }, 250L)
             } else if (forNextChapter && waitingForNextChapter) {
               webView.reload()
-              mainHandler.postDelayed({ collectAndStart(0, forNextChapter = true) }, 800L)
+              mainHandler.postDelayed({ collectAndStart(0, forNextChapter = true, startAnchor = null) }, 800L)
             } else {
               Toast.makeText(this@MainActivity, "회차 본문을 찾지 못했습니다.", Toast.LENGTH_LONG).show()
             }
@@ -1052,10 +1100,10 @@ class MainActivity : AppCompatActivity() {
             val decoded = JSONTokener(result).nextValue() as? String
             if (decoded.isNullOrBlank()) {
               if (retry < 60) {
-                mainHandler.postDelayed({ collectAndStart(retry + 1, forNextChapter) }, 250L)
+                mainHandler.postDelayed({ collectAndStart(retry + 1, forNextChapter, startAnchor) }, 250L)
               } else if (forNextChapter && waitingForNextChapter) {
                 webView.reload()
-                mainHandler.postDelayed({ collectAndStart(0, forNextChapter = true) }, 800L)
+                mainHandler.postDelayed({ collectAndStart(0, forNextChapter = true, startAnchor = null) }, 800L)
               }
               return@post
             }
@@ -1081,10 +1129,10 @@ class MainActivity : AppCompatActivity() {
 
             if (sentences.isEmpty()) {
               if (retry < 60) {
-                mainHandler.postDelayed({ collectAndStart(retry + 1, forNextChapter) }, 250L)
+                mainHandler.postDelayed({ collectAndStart(retry + 1, forNextChapter, startAnchor) }, 250L)
               } else if (forNextChapter && waitingForNextChapter) {
                 webView.reload()
-                mainHandler.postDelayed({ collectAndStart(0, forNextChapter = true) }, 800L)
+                mainHandler.postDelayed({ collectAndStart(0, forNextChapter = true, startAnchor = null) }, 800L)
               } else {
                 Toast.makeText(this@MainActivity, "읽을 수 있는 본문을 찾지 못했습니다.", Toast.LENGTH_LONG).show()
               }
@@ -1097,8 +1145,10 @@ class MainActivity : AppCompatActivity() {
               return@post
             }
 
+            val initialChunkIndex =
+              if (forNextChapter) 0 else resolveInitialChunkIndex(startAnchor)
             currentSentenceIndex = -1
-            currentChunkIndex = -1
+            currentChunkIndex = initialChunkIndex - 1
             currentSentencePartIndex = 0
             active = true
             paused = false
@@ -1117,10 +1167,10 @@ class MainActivity : AppCompatActivity() {
             mainHandler.postDelayed({ prepareNextChapterPreload() }, 1200L)
           } catch (error: Exception) {
             if (retry < 60) {
-              mainHandler.postDelayed({ collectAndStart(retry + 1, forNextChapter) }, 250L)
+              mainHandler.postDelayed({ collectAndStart(retry + 1, forNextChapter, startAnchor) }, 250L)
             } else if (forNextChapter && waitingForNextChapter) {
               webView.reload()
-              mainHandler.postDelayed({ collectAndStart(0, forNextChapter = true) }, 800L)
+              mainHandler.postDelayed({ collectAndStart(0, forNextChapter = true, startAnchor = null) }, 800L)
             } else {
               Toast.makeText(this@MainActivity, "TTS 본문 분석에 실패했습니다: ${error.message.orEmpty()}", Toast.LENGTH_LONG).show()
             }
@@ -1128,6 +1178,61 @@ class MainActivity : AppCompatActivity() {
         }
       }
     }
+
+    private fun resolveInitialChunkIndex(anchor: TtsStartAnchor?): Int {
+      if (playbackChunks.isEmpty()) return 0
+      if (anchor == null) return 0
+
+      val sentenceIndex = findSentenceIndexNearAnchor(anchor.text)
+      if (sentenceIndex >= 0) {
+        val chunkIndex =
+          playbackChunks.indexOfFirst { chunk ->
+            sentenceIndex >= chunk.startSentenceIndex &&
+              sentenceIndex < chunk.endSentenceIndexExclusive
+          }
+        if (chunkIndex >= 0) return chunkIndex
+      }
+
+      return (
+        anchor.scrollFraction.coerceIn(0f, 1f) * playbackChunks.lastIndex
+      ).roundToInt().coerceIn(0, playbackChunks.lastIndex)
+    }
+
+    private fun findSentenceIndexNearAnchor(rawAnchor: String): Int {
+      val anchor = normalizeAnchorText(rawAnchor)
+      if (anchor.length < 2) return -1
+
+      sentences.forEachIndexed { index, sentence ->
+        val candidate = normalizeAnchorText(sentence.text)
+        if (candidate.length >= 2 && (candidate.contains(anchor) || anchor.contains(candidate))) {
+          return index
+        }
+      }
+
+      val compactAnchor = anchor.replace(" ", "")
+      if (compactAnchor.length < 8) return -1
+      val windowLength = minOf(32, compactAnchor.length)
+      val starts =
+        listOf(
+          0,
+          ((compactAnchor.length - windowLength) / 2).coerceAtLeast(0),
+          (compactAnchor.length - windowLength).coerceAtLeast(0),
+        ).distinct()
+
+      for (start in starts) {
+        val needle = compactAnchor.substring(start, start + windowLength)
+        val index =
+          sentences.indexOfFirst { sentence ->
+            normalizeAnchorText(sentence.text).replace(" ", "").contains(needle)
+          }
+        if (index >= 0) return index
+      }
+
+      return -1
+    }
+
+    private fun normalizeAnchorText(value: String): String =
+      value.replace(Regex("\\s+"), " ").trim()
 
     private fun clearQueuedSpeechState() {
       queuedTtsRequests.clear()
@@ -1163,31 +1268,12 @@ class MainActivity : AppCompatActivity() {
      * Pronunciation, units, fractions, decimals and whitespace normalization are
      * all editable default user rules in TtsRegexStore; there is no hidden second pass.
      */
-    private fun prepareTtsText(original: String): String {
-      var result = original.trim()
-      if (result.isEmpty()) return result
-
-      for (rule in compiledTtsRules) {
-        result =
-          try {
-            if (rule.useSpecialReplacement) {
-              TtsKoreanNumber.replaceAll(
-                rule.pattern,
-                result,
-                rule.replacement,
-                koreanNumberNormalizationEnabled,
-              )
-            } else {
-              rule.pattern.matcher(result).replaceAll(rule.replacement)
-            }
-          } catch (_: Throwable) {
-            // A bad user rule must never terminate TTS playback.
-            result
-          }
-      }
-
-      return result.trim()
-    }
+    private fun prepareTtsText(original: String): String =
+      TtsRegexEngine.applyCompiled(
+        original = original,
+        rules = compiledTtsRules,
+        koreanNumberEnabled = koreanNumberNormalizationEnabled,
+      )
 
     private fun hasSpeakableContent(text: String): Boolean =
       speakableContentRegex.containsMatchIn(text)

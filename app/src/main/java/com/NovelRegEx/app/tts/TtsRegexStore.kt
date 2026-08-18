@@ -9,7 +9,7 @@ object TtsRegexStore {
     private const val KEY_RULES = "tts_regex_rules_v1"
     private const val KEY_DEFAULT_RULES_VERSION = "tts_regex_default_rules_version"
     private const val KEY_KOREAN_NUMBER_ENABLED = "tts_regex_korean_number_enabled_v1"
-    private const val DEFAULT_RULES_VERSION = 3
+    private const val DEFAULT_RULES_VERSION = 5
 
     private const val NUMBER_TOKEN = "(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\\.[0-9]+)?"
 
@@ -87,11 +87,12 @@ object TtsRegexStore {
         }
 
     /**
-     * v2 -> v3:
-     * - Only untouched v2 defaults are replaced.
-     * - User-edited rules are preserved.
-     * - User-deleted old rules are not resurrected.
-     * - Only genuinely new v3 rules are appended.
+     * Migration to the verified rule set.
+     *
+     * - Exact untouched v2 defaults are upgraded in place.
+     * - The broken v3 temporary whitespace IDs are repaired.
+     * - User-edited rules are never overwritten.
+     * - Rules deleted after v3 are not re-added.
      */
     private fun migrateDefaultRulesIfNeeded(
         prefs: SharedPreferences,
@@ -101,37 +102,49 @@ object TtsRegexStore {
         if (currentVersion >= DEFAULT_RULES_VERSION) return rules
 
         val oldV2 = v2DefaultRules()
-        val newV3 = defaultRules()
+        val currentDefaults = defaultRules()
         val oldById = oldV2.associateBy { it.id }
-        val newById = newV3.associateBy { it.id }
+        val currentById = currentDefaults.associateBy { it.id }
 
         if (currentVersion >= 2) {
+            // Repair every untouched v2 rule even when a broken v3 migration
+            // previously marked the preference version as upgraded.
             for (index in rules.indices) {
                 val current = rules[index]
                 val oldDefault = oldById[current.id] ?: continue
                 if (!sameRuleContent(current, oldDefault)) continue
 
-                val updated = newById[current.id] ?: continue
+                val updated = currentById[current.id] ?: continue
                 rules[index] =
                     updated.copy(
-                        id = current.id,
                         enabled = current.enabled,
                     )
             }
 
-            val oldIds = oldV2.mapTo(mutableSetOf()) { it.id }
-            val existingIds = rules.mapTo(mutableSetOf()) { it.id }
+            // v3 used temporary IDs for two whitespace defaults. v4 kept a
+            // repair for them; keep accepting both broken states here.
+            if (currentVersion <= 4) {
+                migrateBrokenV3Aliases(rules, currentById)
+            }
 
-            newV3
-                .filter { it.id !in oldIds }
-                .forEach { rule ->
-                    if (rule.id !in existingIds) {
-                        rules += rule
-                        existingIds += rule.id
+            // Only a direct upgrade from v2 should receive rules that genuinely
+            // did not exist in v2. Once v3 has run, absence can mean the user
+            // deliberately deleted that rule, so do not resurrect it.
+            if (currentVersion == 2) {
+                val oldIds = oldV2.mapTo(mutableSetOf()) { it.id }
+                val existingIds = rules.mapTo(mutableSetOf()) { it.id }
+
+                currentDefaults
+                    .filter { it.id !in oldIds }
+                    .forEach { rule ->
+                        if (rule.id !in existingIds) {
+                            rules += rule
+                            existingIds += rule.id
+                        }
                     }
-                }
+            }
         } else {
-            // Direct upgrade from the old 3-rule era.
+            // Direct upgrade from the original 3-rule era.
             val existingSignatures = rules.mapTo(mutableSetOf()) { signatureOf(it) }
             speechNormalizationRules().forEach { rule ->
                 if (signatureOf(rule) !in existingSignatures) {
@@ -143,6 +156,82 @@ object TtsRegexStore {
 
         saveToPreferences(prefs, rules)
         return rules
+    }
+
+
+    /**
+     * The first v3 build used two temporary IDs for whitespace rules. Upgrades
+     * from v2 could therefore retain the old rules and append one duplicate,
+     * producing 27 rules. Fresh v3 installs also missed the legacy comma rule.
+     * Only untouched temporary defaults are rewritten/removed here.
+     */
+    private fun migrateBrokenV3Aliases(
+        rules: MutableList<TtsRegexRule>,
+        currentDefaults: Map<String, TtsRegexRule>,
+    ) {
+        val brokenInvisible =
+            TtsRegexRule(
+                id = "default-remove-invisible-space",
+                name = "제로폭 문자 제거",
+                pattern = "[\\u200B\\u200C\\u200D\\u2060\\uFEFF]",
+                replacement = "",
+                ignoreCase = false,
+                isRegex = true,
+            )
+        val brokenSpecialSpaces =
+            TtsRegexRule(
+                id = "default-normalize-special-spaces",
+                name = "특수 공백을 일반 공백으로",
+                pattern = "[\\u00A0\\u2007\\u202F\\u3000]+",
+                replacement = " ",
+                ignoreCase = false,
+                isRegex = true,
+            )
+
+        val hadBrokenInvisible =
+            rules.any { it.id == brokenInvisible.id && sameRuleContent(it, brokenInvisible) }
+
+        migrateAliasRule(
+            rules = rules,
+            oldRule = brokenInvisible,
+            newRule = currentDefaults.getValue("default-remove-zero-width-space"),
+        )
+        migrateAliasRule(
+            rules = rules,
+            oldRule = brokenSpecialSpaces,
+            newRule = currentDefaults.getValue("default-normalize-nbsp"),
+        )
+
+        // A fresh install of the broken v3 set never received this disabled
+        // legacy rule. Add it only when that exact broken-v3 fingerprint exists.
+        if (hadBrokenInvisible && rules.none { it.id == "default-read-comma-decimal-legacy" }) {
+            val commaRule = currentDefaults.getValue("default-read-comma-decimal-legacy")
+            val insertAt =
+                rules.indexOfFirst { it.id == "default-read-fraction" }
+                    .takeIf { it >= 0 }
+                    ?: rules.size
+            rules.add(insertAt, commaRule)
+        }
+    }
+
+    private fun migrateAliasRule(
+        rules: MutableList<TtsRegexRule>,
+        oldRule: TtsRegexRule,
+        newRule: TtsRegexRule,
+    ) {
+        val oldIndex =
+            rules.indexOfFirst {
+                it.id == oldRule.id && sameRuleContent(it, oldRule)
+            }
+        if (oldIndex < 0) return
+
+        val oldEnabled = rules[oldIndex].enabled
+        val canonicalIndex = rules.indexOfFirst { it.id == newRule.id }
+        if (canonicalIndex >= 0) {
+            rules.removeAt(oldIndex)
+        } else {
+            rules[oldIndex] = newRule.copy(enabled = oldEnabled)
+        }
     }
 
     private fun sameRuleContent(
