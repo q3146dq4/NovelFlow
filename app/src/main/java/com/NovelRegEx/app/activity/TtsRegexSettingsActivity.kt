@@ -20,6 +20,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.NovelRegEx.app.R
+import com.NovelRegEx.app.tts.TtsKoreanNumber
 import com.NovelRegEx.app.tts.TtsRegexRule
 import com.NovelRegEx.app.tts.TtsRegexStore
 import java.util.Locale
@@ -43,6 +44,7 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
     private var previewTts: TextToSpeech? = null
     private var previewTtsReady = false
     private var pendingPreviewText: String? = null
+
 
     private val exportLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
@@ -110,7 +112,7 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
         }
 
         testInput.setText(
-            "커버접기, 3.1/100, 공격력은 72%이고 무게는 12kg이었다."
+            "3.14kg, 14.5km, 1,000원, 8,884,844원, 1$, ${'$'}2, 72%, 3.1/100"
         )
 
         initPreviewTts()
@@ -178,6 +180,7 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
     private fun renderRules() {
         rulesContainer.removeAllViews()
         countText.text = "총 ${rules.size}개 규칙"
+        rulesContainer.addView(createKoreanNumberToggleCard())
 
         if (rules.isEmpty()) {
             rulesContainer.addView(
@@ -194,6 +197,44 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
         rules.forEachIndexed { index, rule ->
             rulesContainer.addView(createRuleCard(index, rule))
         }
+    }
+
+    private fun createKoreanNumberToggleCard(): View {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            setBackgroundColor(0xFFE8F0FE.toInt())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dp(12)
+            }
+        }
+
+        val toggle = Switch(this).apply {
+            text = "한국어 숫자 발음 변환"
+            textSize = 16f
+            isChecked = TtsRegexStore.isKoreanNumberEnabled(this@TtsRegexSettingsActivity)
+            setOnCheckedChangeListener { _, checked ->
+                TtsRegexStore.setKoreanNumberEnabled(this@TtsRegexSettingsActivity, checked)
+                runTest()
+            }
+        }
+
+        val description = TextView(this).apply {
+            text =
+                "ON: ${'$'}{ko-number:1} 같은 치환이 숫자를 한국어 발음으로 바꿉니다. " +
+                    "예: 3.14kg → 삼점일사킬로그램, 1,000 → 천.\n" +
+                    "OFF: 같은 치환은 숫자 원문을 유지합니다. 예: 3.14kg → 3.14킬로그램."
+            textSize = 12f
+            setTextColor(0xFF555555.toInt())
+            setPadding(0, dp(6), 0, 0)
+        }
+
+        card.addView(toggle)
+        card.addView(description)
+        return card
     }
 
     private fun createRuleCard(
@@ -383,7 +424,9 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
         }
 
         val testHint = TextView(this).apply {
-            text = "예: 3.1/100 → 정규식에서는 그룹을 사용할 수 있습니다. (\$1, \$2 등)"
+            text =
+                "그룹: \$1, \$2 등 · 한국어 숫자: ${'$'}{ko-number:1}\n" +
+                    "한국어 숫자 기능을 끄면 ${'$'}{ko-number:1}은 그룹 1의 숫자 원문을 그대로 사용합니다."
             textSize = 12f
             setTextColor(0xFF777777.toInt())
             setPadding(0, dp(4), 0, dp(8))
@@ -506,6 +549,8 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
         var result = original.trim()
         if (result.isEmpty()) return result
 
+        // 실제 재생과 동일하게 현재 목록의 활성 규칙을 위에서 아래 순서대로 적용한다.
+        // 분수/소수/통화/단위/공백 정리도 모두 이 목록 안의 편집 가능한 기본 규칙이다.
         for (rule in rules) {
             if (!rule.enabled || rule.pattern.isBlank()) continue
 
@@ -515,17 +560,28 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
                 } else {
                     Pattern.UNICODE_CASE
                 }
+
                 val pattern = if (rule.isRegex) {
                     Pattern.compile(rule.pattern, flags)
                 } else {
                     Pattern.compile(Pattern.quote(rule.pattern), flags)
                 }
+
                 val replacement = if (rule.isRegex) {
                     rule.replacement
                 } else {
                     java.util.regex.Matcher.quoteReplacement(rule.replacement)
                 }
-                pattern.matcher(result).replaceAll(replacement)
+                if (rule.isRegex) {
+                    TtsKoreanNumber.replaceAll(
+                        pattern,
+                        result,
+                        replacement,
+                        TtsRegexStore.isKoreanNumberEnabled(this),
+                    )
+                } else {
+                    pattern.matcher(result).replaceAll(replacement)
+                }
             } catch (_: Exception) {
                 result
             }

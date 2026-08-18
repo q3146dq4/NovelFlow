@@ -57,6 +57,7 @@ import com.NovelRegEx.app.R
 import com.NovelRegEx.app.filter.FilterPreferences
 import com.NovelRegEx.app.filter.FilterRuntime
 import com.NovelRegEx.app.layout.TopSwipeRefreshLayout
+import com.NovelRegEx.app.tts.TtsKoreanNumber
 import com.NovelRegEx.app.tts.TtsPreferences
 import com.NovelRegEx.app.tts.TtsRegexStore
 import com.NovelRegEx.app.update.UpdateChecker
@@ -94,6 +95,7 @@ class MainActivity : AppCompatActivity() {
 
   private val scrollPositions = LinkedHashMap<String, Int>(16, 0.75f, true)
   private val supportsDocumentStartScript = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
+  private val supportsWebMessageListener = WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)
 
   private var lastBackPress = 0L
   private var restoringFromViewer = false
@@ -170,6 +172,7 @@ class MainActivity : AppCompatActivity() {
   private data class CompiledTtsRule(
     val pattern: java.util.regex.Pattern,
     val replacement: String,
+    val useSpecialReplacement: Boolean,
   )
 
   inner class ScrollRestoreInterface {
@@ -203,6 +206,7 @@ class MainActivity : AppCompatActivity() {
         if (isViewerUrl(webView.url)) ttsController.openAndStart()
       }
     }
+
     @Suppress("unused")
     @JavascriptInterface
     fun stop() {
@@ -280,7 +284,7 @@ class MainActivity : AppCompatActivity() {
 
     webView.addJavascriptInterface(ScrollRestoreInterface(), "_ScrollRestore")
     webView.addJavascriptInterface(FilterCssInterface(), "_AdFilter")
-    webView.addJavascriptInterface(TtsJavascriptInterface(), "_NPTTS")
+    setupTtsJavascriptBridge()
 
     if (supportsDocumentStartScript) {
       documentStartScripts.forEach { script ->
@@ -396,7 +400,12 @@ class MainActivity : AppCompatActivity() {
           listenBtn.addEventListener('click', function(e) {
             e.preventDefault();
             e.stopPropagation();
-            if (window._NPTTS && typeof window._NPTTS.open === "function") window._NPTTS.open();
+            var bridge = window._NPTTS;
+            if (bridge && typeof bridge.postMessage === "function") {
+              bridge.postMessage("open");
+            } else if (bridge && typeof bridge.open === "function") {
+              bridge.open();
+            }
           }, true);
 
           var parentUl = recommendBtn.parentNode;
@@ -455,6 +464,27 @@ class MainActivity : AppCompatActivity() {
       preloadWebView,
       android.widget.FrameLayout.LayoutParams(1, 1)
     )
+  }
+
+  private fun setupTtsJavascriptBridge() {
+    if (supportsWebMessageListener) {
+      WebViewCompat.addWebMessageListener(
+        webView,
+        "_NPTTS",
+        TRUSTED_DOCUMENT_ORIGINS,
+        WebViewCompat.WebMessageListener { _, message, sourceOrigin, isMainFrame, _ ->
+          if (!isMainFrame || !isNovelpiaUrl(sourceOrigin.toString())) return@WebMessageListener
+          when (message.data) {
+            "open" -> ttsController.openAndStart()
+            "stop" -> ttsController.stop()
+          }
+        },
+      )
+      return
+    }
+
+    // 매우 오래된 WebView용 fallback. 최신 WebView에서는 origin-aware WebMessage bridge를 사용한다.
+    webView.addJavascriptInterface(TtsJavascriptInterface(), "_NPTTS")
   }
 
   private fun setupListeners() {
@@ -659,7 +689,7 @@ class MainActivity : AppCompatActivity() {
     intent.data
       ?.toString()
       ?.takeIf(::isNovelpiaUrl)
-      ?.let { webView.loadUrl(it) }
+      ?.let(webView::loadUrl)
   }
 
   override fun onResume() {
@@ -672,7 +702,8 @@ class MainActivity : AppCompatActivity() {
   }
 
   override fun onPause() {
-    // Keep WebView JavaScript alive only while TTS/binge/preload actually needs it.
+    // 화면을 끈 상태의 TTS/정주행 중에는 WebView JavaScript가 계속 돌아야 한다.
+    // TTS가 완전히 비활성 상태일 때만 WebView를 pause해 불필요한 백그라운드 작업을 줄인다.
     if (!ttsController.needsBackgroundWebView()) {
       webView.onPause()
       if (::preloadWebView.isInitialized) preloadWebView.onPause()
@@ -758,6 +789,7 @@ class MainActivity : AppCompatActivity() {
     private var preloadInFlight = false
 
     private var compiledTtsRules: List<CompiledTtsRule> = emptyList()
+    private var koreanNumberNormalizationEnabled = true
     private val speakableContentRegex = Regex("[가-힣a-zA-Z0-9]")
 
     @Suppress("DEPRECATION")
@@ -797,8 +829,8 @@ class MainActivity : AppCompatActivity() {
 
     init {
       refreshCompiledTtsRules()
-      textToSpeech = TextToSpeech(this@MainActivity, this) 
-      
+      textToSpeech = TextToSpeech(this@MainActivity, this)
+
       mediaSession = MediaSession(this@MainActivity, "NovelTtsSession").apply {
         setCallback(object : MediaSession.Callback() {
           override fun onPlay() { mainHandler.post { togglePlayPause() } }
@@ -986,6 +1018,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun refreshCompiledTtsRules() {
+      koreanNumberNormalizationEnabled = TtsRegexStore.isKoreanNumberEnabled(this@MainActivity)
       compiledTtsRules =
         TtsRegexStore
           .load(this@MainActivity)
@@ -999,13 +1032,13 @@ class MainActivity : AppCompatActivity() {
                 } else {
                   java.util.regex.Pattern.UNICODE_CASE
                 }
-              val patternText =
-                if (rule.isRegex) rule.pattern else java.util.regex.Pattern.quote(rule.pattern)
+              val patternText = if (rule.isRegex) rule.pattern else java.util.regex.Pattern.quote(rule.pattern)
               val replacement =
                 if (rule.isRegex) rule.replacement else java.util.regex.Matcher.quoteReplacement(rule.replacement)
               CompiledTtsRule(
                 java.util.regex.Pattern.compile(patternText, flags),
                 replacement,
+                rule.isRegex,
               )
             }.getOrNull()
           }.toList()
@@ -1154,28 +1187,38 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Apply the enabled TTS-regex list from top to bottom.
-     * Pronunciation, units, fractions, decimals and whitespace normalization are
-     * all editable default user rules in TtsRegexStore; there is no hidden second pass.
+     * 화면에 표시되는 원문은 건드리지 않고 실제 TTS에 넘길 문자열에
+     * TTS 정규식 설정의 활성 규칙을 위에서 아래 순서대로 적용한다.
+     *
+     * 분수/소수/통화/단위/공백 정리까지 모두 TtsRegexStore의 기본 사용자 규칙이므로
+     * 사용자가 설정 화면에서 수정, 비활성화, 순서 변경, 삭제할 수 있다.
      */
     private fun prepareTtsText(original: String): String {
       var result = original.trim()
       if (result.isEmpty()) return result
 
       for (rule in compiledTtsRules) {
-        result =
-          try {
+        result = try {
+          if (rule.useSpecialReplacement) {
+            TtsKoreanNumber.replaceAll(
+              rule.pattern,
+              result,
+              rule.replacement,
+              koreanNumberNormalizationEnabled,
+            )
+          } else {
             rule.pattern.matcher(result).replaceAll(rule.replacement)
-          } catch (_: Exception) {
-            result
           }
+        } catch (_: Exception) {
+          // 잘못된 replacement 하나 때문에 TTS 전체가 멈추지 않게 해당 규칙만 무시한다.
+          result
+        }
       }
 
       return result.trim()
     }
 
-    private fun hasSpeakableContent(text: String): Boolean =
-      speakableContentRegex.containsMatchIn(text)
+    private fun hasSpeakableContent(text: String): Boolean = speakableContentRegex.containsMatchIn(text)
 
     private fun splitAtCommas(text: String): List<String> {
       val result = mutableListOf<String>()
@@ -1440,8 +1483,9 @@ class MainActivity : AppCompatActivity() {
             rolling = true,
           )
         if (enqueued == null) {
-          // Tail pre-queue is speculative: do not interrupt audio that is already playing.
-          // A missing immediate next chunk is retried from onDone().
+          // 선행 요청은 speculative 작업이다. 먼 미래 청크 하나가 거부됐다고
+          // 현재 재생 중인 청크와 이미 정상 enqueue된 청크까지 끊지 않는다.
+          // 해당 청크가 실제 다음 head가 되었을 때 onDone에서 다시 시도한다.
           return
         }
         nextIndex++
@@ -1571,9 +1615,7 @@ class MainActivity : AppCompatActivity() {
           return@post
         }
 
-        // Android TTS normally starts the already queued next chunk immediately.
-        // If speculative pre-queue previously failed before the immediate next chunk,
-        // retry that head now instead of skipping it.
+        // 다음 청크는 Android TTS 큐가 바로 이어 재생한다. 끝난 만큼 맨 뒤에 하나를 보충한다.
         if (request.chunkIndex >= playbackChunks.lastIndex) {
           finishEpisode()
           return@post
@@ -1591,6 +1633,7 @@ class MainActivity : AppCompatActivity() {
               rolling = true,
             )
           if (enqueued == null) {
+            // 이제는 speculative tail이 아니라 실제 다음 head다. 정상 실패 복구 경로로 전환한다.
             currentChunkIndex = nextChunkIndex
             currentSentenceIndex = nextChunk.startSentenceIndex
             currentSentencePartIndex = nextChunk.commaPartIndex ?: 0
