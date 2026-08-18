@@ -87,6 +87,7 @@ object SettingBackupCodec {
       volumeDirection = validOrDefault(prefs.getString("volume_direction", "up_prev"), volumeDirections, "up_prev"),
       swipeFraction = validOrDefault(prefs.getString("swipe_fraction", "0.15"), swipeFractions, "0.15"),
       ttsChunkMode = TtsPreferences.getChunkMode(context),
+      ttsRollingPrequeueDepth = TtsPreferences.getRollingPrequeueDepth(context),
       filtersEnabled = prefs.getBoolean(FilterPreferences.KEY_ENABLED, true),
       filtersAutoUpdate = prefs.getBoolean(FilterPreferences.KEY_AUTO_UPDATE, true),
       filterSubscriptions = FilterPreferences.getSubscriptionUrls(context),
@@ -106,6 +107,11 @@ object SettingBackupCodec {
           .optString("ttsChunkMode", TtsPreferences.DEFAULT_CHUNK_MODE)
           .takeIf { it in TtsPreferences.chunkModes }
           ?: TtsPreferences.DEFAULT_CHUNK_MODE,
+      ttsRollingPrequeueDepth =
+        json
+          .optInt("ttsRollingPrequeueDepth", TtsPreferences.DEFAULT_ROLLING_PREQUEUE_DEPTH)
+          .takeIf { it in TtsPreferences.rollingPrequeueDepths }
+          ?: TtsPreferences.DEFAULT_ROLLING_PREQUEUE_DEPTH,
       filtersEnabled = json.getBoolean("filtersEnabled"),
       filtersAutoUpdate = json.getBoolean("filtersAutoUpdate"),
       filterSubscriptions = parseStringArray(json.getJSONArray("filterSubscriptions")),
@@ -131,6 +137,7 @@ object SettingBackupCodec {
       .put("volumeDirection", volumeDirection)
       .put("swipeFraction", swipeFraction)
       .put("ttsChunkMode", ttsChunkMode)
+      .put("ttsRollingPrequeueDepth", ttsRollingPrequeueDepth)
       .put("filtersEnabled", filtersEnabled)
       .put("filtersAutoUpdate", filtersAutoUpdate)
       .put("filterSubscriptions", filterSubscriptions.toJsonArray())
@@ -197,6 +204,7 @@ data class BackupSettings(
   val volumeDirection: String,
   val swipeFraction: String,
   val ttsChunkMode: String,
+  val ttsRollingPrequeueDepth: Int,
   val filtersEnabled: Boolean,
   val filtersAutoUpdate: Boolean,
   val filterSubscriptions: List<String>,

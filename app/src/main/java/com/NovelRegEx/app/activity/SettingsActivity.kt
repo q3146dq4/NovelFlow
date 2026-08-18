@@ -111,6 +111,7 @@ class SettingsActivity : AppCompatActivity() {
     ) {
       setPreferencesFromResource(R.xml.root_preferences, rootKey)
       setupStartPagePref()
+      setupTtsRollingPreQueuePref()
       setupLinkSettingsPref()
       setupFilterPrefs()
       setupSettingBackupPrefs()
@@ -128,6 +129,27 @@ class SettingsActivity : AppCompatActivity() {
         refreshStorageSummaries()
         refreshUpdatePrefs()
       }
+    }
+
+    private fun setupTtsRollingPreQueuePref() {
+      val chunkModePref = findPreference<ListPreference>(TtsPreferences.KEY_CHUNK_MODE) ?: return
+      val group = chunkModePref.parent ?: return
+      if (findPreference<ListPreference>(TtsPreferences.KEY_ROLLING_PREQUEUE_DEPTH) != null) return
+
+      val preQueuePref =
+        ListPreference(requireContext()).apply {
+          key = TtsPreferences.KEY_ROLLING_PREQUEUE_DEPTH
+          title = "TTS Rolling Pre-Queue"
+          entries = arrayOf("OFF", "2 chunks", "3 chunks (권장)", "4 chunks", "5 chunks")
+          entryValues = arrayOf("0", "2", "3", "4", "5")
+          setDefaultValue(TtsPreferences.DEFAULT_ROLLING_PREQUEUE_DEPTH.toString())
+          summaryProvider =
+            Preference.SummaryProvider<ListPreference> { pref ->
+              val selected = pref.entry?.toString() ?: "3 chunks (권장)"
+              "$selected · 현재 청크를 재생하는 동안 다음 TTS 청크를 미리 대기열에 넣어 청크 사이 묵음을 줄입니다."
+            }
+        }
+      group.addPreference(preQueuePref)
     }
 
     // region 시작 페이지
@@ -569,6 +591,7 @@ class SettingsActivity : AppCompatActivity() {
         putString("volume_direction", settings.volumeDirection)
         putString("swipe_fraction", settings.swipeFraction)
         putString(TtsPreferences.KEY_CHUNK_MODE, settings.ttsChunkMode)
+        putString(TtsPreferences.KEY_ROLLING_PREQUEUE_DEPTH, settings.ttsRollingPrequeueDepth.toString())
         putBoolean(FilterPreferences.KEY_ENABLED, settings.filtersEnabled)
         putBoolean(FilterPreferences.KEY_AUTO_UPDATE, settings.filtersAutoUpdate)
         putBoolean("auto_check_update", settings.autoCheckUpdate)
@@ -595,6 +618,7 @@ class SettingsActivity : AppCompatActivity() {
         "volume_direction" to "up_prev",
         "swipe_fraction" to "0.15",
         TtsPreferences.KEY_CHUNK_MODE to TtsPreferences.DEFAULT_CHUNK_MODE,
+        TtsPreferences.KEY_ROLLING_PREQUEUE_DEPTH to TtsPreferences.DEFAULT_ROLLING_PREQUEUE_DEPTH.toString(),
       ).forEach { (key, defaultValue) ->
         findPreference<ListPreference>(key)?.value = prefs.getString(key, defaultValue)
       }
