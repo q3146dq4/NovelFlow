@@ -45,7 +45,6 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
     private var previewTtsReady = false
     private var pendingPreviewText: String? = null
 
-
     private val exportLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
@@ -217,16 +216,18 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
             textSize = 16f
             isChecked = TtsRegexStore.isKoreanNumberEnabled(this@TtsRegexSettingsActivity)
             setOnCheckedChangeListener { _, checked ->
-                TtsRegexStore.setKoreanNumberEnabled(this@TtsRegexSettingsActivity, checked)
-                runTest()
+                TtsRegexStore.setKoreanNumberEnabled(
+                    this@TtsRegexSettingsActivity,
+                    checked,
+                )
             }
         }
 
         val description = TextView(this).apply {
             text =
-                "ON: ${'$'}{ko-number:1} 같은 치환이 숫자를 한국어 발음으로 바꿉니다. " +
+                "ON: ${'$'}{ko-number:1} 치환이 숫자를 한국어 발음으로 바꿉니다. " +
                     "예: 3.14kg → 삼점일사킬로그램, 1,000 → 천.\n" +
-                    "OFF: 같은 치환은 숫자 원문을 유지합니다. 예: 3.14kg → 3.14킬로그램."
+                    "OFF: 숫자 원문을 유지합니다. 예: 3.14kg → 3.14킬로그램."
             textSize = 12f
             setTextColor(0xFF555555.toInt())
             setPadding(0, dp(6), 0, 0)
@@ -426,7 +427,7 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
         val testHint = TextView(this).apply {
             text =
                 "그룹: \$1, \$2 등 · 한국어 숫자: ${'$'}{ko-number:1}\n" +
-                    "한국어 숫자 기능을 끄면 ${'$'}{ko-number:1}은 그룹 1의 숫자 원문을 그대로 사용합니다."
+                    "한국어 숫자 기능을 끄면 매크로는 캡처 숫자 원문을 그대로 사용합니다."
             textSize = 12f
             setTextColor(0xFF777777.toInt())
             setPadding(0, dp(4), 0, dp(8))
@@ -536,7 +537,19 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
     // ============================================================
 
     private fun runTest(): String {
-        val result = prepareSpeechText(testInput.text.toString())
+        val original = testInput.text.toString()
+        val result =
+            try {
+                prepareSpeechText(original)
+            } catch (error: Throwable) {
+                Toast.makeText(
+                    this,
+                    "정규식 변환 오류: ${error.message.orEmpty()}",
+                    Toast.LENGTH_LONG
+                ).show()
+                original
+            }
+
         testOutput.text = if (result.isBlank()) {
             "(모든 텍스트가 규칙에 의해 제거되었습니다.)"
         } else {
@@ -549,42 +562,43 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
         var result = original.trim()
         if (result.isEmpty()) return result
 
-        // 실제 재생과 동일하게 현재 목록의 활성 규칙을 위에서 아래 순서대로 적용한다.
-        // 분수/소수/통화/단위/공백 정리도 모두 이 목록 안의 편집 가능한 기본 규칙이다.
+        val koreanNumberEnabled = TtsRegexStore.isKoreanNumberEnabled(this)
+
         for (rule in rules) {
             if (!rule.enabled || rule.pattern.isBlank()) continue
 
-            result = try {
-                val flags = if (rule.ignoreCase) {
-                    Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
-                } else {
-                    Pattern.UNICODE_CASE
-                }
+            result =
+                try {
+                    val flags = if (rule.ignoreCase) {
+                        Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CASE
+                    } else {
+                        Pattern.UNICODE_CASE
+                    }
+                    val pattern = if (rule.isRegex) {
+                        Pattern.compile(rule.pattern, flags)
+                    } else {
+                        Pattern.compile(Pattern.quote(rule.pattern), flags)
+                    }
+                    val replacement = if (rule.isRegex) {
+                        rule.replacement
+                    } else {
+                        java.util.regex.Matcher.quoteReplacement(rule.replacement)
+                    }
 
-                val pattern = if (rule.isRegex) {
-                    Pattern.compile(rule.pattern, flags)
-                } else {
-                    Pattern.compile(Pattern.quote(rule.pattern), flags)
+                    if (rule.isRegex && rule.replacement.contains("\${ko-number:")) {
+                        TtsKoreanNumber.replaceAll(
+                            pattern,
+                            result,
+                            replacement,
+                            koreanNumberEnabled,
+                        )
+                    } else {
+                        pattern.matcher(result).replaceAll(replacement)
+                    }
+                } catch (_: Throwable) {
+                    // One bad user rule must not close the settings screen.
+                    result
                 }
-
-                val replacement = if (rule.isRegex) {
-                    rule.replacement
-                } else {
-                    java.util.regex.Matcher.quoteReplacement(rule.replacement)
-                }
-                if (rule.isRegex) {
-                    TtsKoreanNumber.replaceAll(
-                        pattern,
-                        result,
-                        replacement,
-                        TtsRegexStore.isKoreanNumberEnabled(this),
-                    )
-                } else {
-                    pattern.matcher(result).replaceAll(replacement)
-                }
-            } catch (_: Exception) {
-                result
-            }
         }
 
         return result.trim()
@@ -620,16 +634,25 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
     }
 
     private fun speakPreviewNow(text: String) {
-        previewTts?.stop()
-        previewTts?.setLanguage(Locale.KOREAN)
-        previewTts?.setSpeechRate(1.0f)
-
-        val result = previewTts?.speak(
-            text,
-            TextToSpeech.QUEUE_FLUSH,
-            null,
-            "np_regex_preview"
-        ) ?: TextToSpeech.ERROR
+        val result =
+            try {
+                previewTts?.stop()
+                previewTts?.setLanguage(Locale.KOREAN)
+                previewTts?.setSpeechRate(1.0f)
+                previewTts?.speak(
+                    text,
+                    TextToSpeech.QUEUE_FLUSH,
+                    null,
+                    "np_regex_preview"
+                ) ?: TextToSpeech.ERROR
+            } catch (error: Throwable) {
+                Toast.makeText(
+                    this,
+                    "TTS 테스트 오류: ${error.message.orEmpty()}",
+                    Toast.LENGTH_LONG
+                ).show()
+                TextToSpeech.ERROR
+            }
 
         if (result == TextToSpeech.ERROR) {
             Toast.makeText(

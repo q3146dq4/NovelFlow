@@ -16,26 +16,27 @@ object TtsRegexStore {
     fun load(context: Context): MutableList<TtsRegexRule> {
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
         val raw = prefs.getString(KEY_RULES, null)
-        if (raw == null) {
-            prefs.edit()
-                .putInt(KEY_DEFAULT_RULES_VERSION, DEFAULT_RULES_VERSION)
-                .apply()
-            return defaultRules().toMutableList()
-        }
 
-        val loaded = runCatching {
-            val array = JSONArray(raw)
-            buildList {
-                for (i in 0 until array.length()) {
-                    val rule = TtsRegexRule.fromJson(array.getJSONObject(i))
-                    if (rule.pattern.isNotEmpty()) add(rule)
-                }
-            }.toMutableList()
-        }.getOrElse {
+        if (raw == null) {
             val defaults = defaultRules().toMutableList()
             saveToPreferences(prefs, defaults)
             return defaults
         }
+
+        val loaded =
+            runCatching {
+                val array = JSONArray(raw)
+                buildList {
+                    for (i in 0 until array.length()) {
+                        val rule = TtsRegexRule.fromJson(array.getJSONObject(i))
+                        if (rule.pattern.isNotEmpty()) add(rule)
+                    }
+                }.toMutableList()
+            }.getOrElse {
+                val defaults = defaultRules().toMutableList()
+                saveToPreferences(prefs, defaults)
+                return defaults
+            }
 
         return migrateDefaultRulesIfNeeded(prefs, loaded)
     }
@@ -45,15 +46,20 @@ object TtsRegexStore {
     }
 
     fun reset(context: Context) {
-        save(context, defaultRules())
+        saveToPreferences(PreferenceManager.getDefaultSharedPreferences(context), defaultRules())
     }
 
     fun isKoreanNumberEnabled(context: Context): Boolean =
-        PreferenceManager.getDefaultSharedPreferences(context)
+        PreferenceManager
+            .getDefaultSharedPreferences(context)
             .getBoolean(KEY_KOREAN_NUMBER_ENABLED, true)
 
-    fun setKoreanNumberEnabled(context: Context, enabled: Boolean) {
-        PreferenceManager.getDefaultSharedPreferences(context)
+    fun setKoreanNumberEnabled(
+        context: Context,
+        enabled: Boolean,
+    ) {
+        PreferenceManager
+            .getDefaultSharedPreferences(context)
             .edit()
             .putBoolean(KEY_KOREAN_NUMBER_ENABLED, enabled)
             .apply()
@@ -65,27 +71,27 @@ object TtsRegexStore {
         return array.toString(2)
     }
 
-    fun importJson(context: Context, json: String): Result<Int> = runCatching {
-        val array = JSONArray(json)
-        val imported = mutableListOf<TtsRegexRule>()
-        for (i in 0 until array.length()) {
-            val rule = TtsRegexRule.fromJson(array.getJSONObject(i))
-            if (rule.pattern.isNotEmpty()) imported += rule
+    fun importJson(
+        context: Context,
+        json: String,
+    ): Result<Int> =
+        runCatching {
+            val array = JSONArray(json)
+            val imported = mutableListOf<TtsRegexRule>()
+            for (i in 0 until array.length()) {
+                val rule = TtsRegexRule.fromJson(array.getJSONObject(i))
+                if (rule.pattern.isNotEmpty()) imported += rule
+            }
+            saveToPreferences(PreferenceManager.getDefaultSharedPreferences(context), imported)
+            imported.size
         }
-        save(context, imported)
-        imported.size
-    }
 
     /**
-     * v3 변경점
-     * - 숫자+단위의 \\b를 한글 조사와 호환되는 (?![A-Za-z])로 변경
-     * - 숫자/단위/통화 치환의 불필요한 공백 제거
-     * - `${ko-number:N}` 특수 치환 도입
-     * - 소수/분수/천 단위/공백/한자 범위 개선
-     * - 통화 기호가 숫자 앞에 오는 표기도 기본 규칙으로 추가
-     *
-     * 기존 사용자가 수정한 패턴/치환은 덮어쓰지 않는다.
-     * 이전 기본값과 정확히 일치하는 규칙만 새 기본값으로 1회 교체한다.
+     * v2 -> v3:
+     * - Only untouched v2 defaults are replaced.
+     * - User-edited rules are preserved.
+     * - User-deleted old rules are not resurrected.
+     * - Only genuinely new v3 rules are appended.
      */
     private fun migrateDefaultRulesIfNeeded(
         prefs: SharedPreferences,
@@ -96,43 +102,40 @@ object TtsRegexStore {
 
         val oldV2 = v2DefaultRules()
         val newV3 = defaultRules()
+        val oldById = oldV2.associateBy { it.id }
         val newById = newV3.associateBy { it.id }
 
-        // 이전 기본값을 사용자가 손대지 않은 경우에만 교체한다.
-        for (index in rules.indices) {
-            val current = rules[index]
-            val oldDefault =
-                oldV2.firstOrNull { old ->
-                    // 기존 v1 사용자는 첫 3개 규칙 ID가 UUID일 수 있어서 signature도 확인한다.
-                    (old.id == current.id || sameRuleContent(old, current)) && sameRuleContent(old, current)
-                } ?: continue
+        if (currentVersion >= 2) {
+            for (index in rules.indices) {
+                val current = rules[index]
+                val oldDefault = oldById[current.id] ?: continue
+                if (!sameRuleContent(current, oldDefault)) continue
 
-            val replacement = newById[oldDefault.id] ?: continue
-            rules[index] = replacement.copy(
-                id = current.id,
-                enabled = current.enabled,
-            )
-        }
-
-        val existingIds = rules.mapTo(mutableSetOf()) { it.id }
-        val existingSignatures = rules.mapTo(mutableSetOf()) { signatureOf(it) }
-
-        if (currentVersion < 2) {
-            // v2 정규식 세트를 한 번도 받은 적 없는 사용자는 v3 세트를 추가한다.
-            v3SpeechRules().forEach { rule ->
-                if (rule.id !in existingIds && signatureOf(rule) !in existingSignatures) {
-                    rules += rule
-                    existingIds += rule.id
-                    existingSignatures += signatureOf(rule)
-                }
+                val updated = newById[current.id] ?: continue
+                rules[index] =
+                    updated.copy(
+                        id = current.id,
+                        enabled = current.enabled,
+                    )
             }
-        } else {
-            // v2 사용자는 삭제한 기존 규칙을 되살리지 않고, v3에서 새로 생긴 규칙만 추가한다.
+
             val oldIds = oldV2.mapTo(mutableSetOf()) { it.id }
-            newV3.filter { it.id !in oldIds }.forEach { rule ->
-                if (rule.id !in existingIds && signatureOf(rule) !in existingSignatures) {
+            val existingIds = rules.mapTo(mutableSetOf()) { it.id }
+
+            newV3
+                .filter { it.id !in oldIds }
+                .forEach { rule ->
+                    if (rule.id !in existingIds) {
+                        rules += rule
+                        existingIds += rule.id
+                    }
+                }
+        } else {
+            // Direct upgrade from the old 3-rule era.
+            val existingSignatures = rules.mapTo(mutableSetOf()) { signatureOf(it) }
+            speechNormalizationRules().forEach { rule ->
+                if (signatureOf(rule) !in existingSignatures) {
                     rules += rule
-                    existingIds += rule.id
                     existingSignatures += signatureOf(rule)
                 }
             }
@@ -142,34 +145,36 @@ object TtsRegexStore {
         return rules
     }
 
+    private fun sameRuleContent(
+        a: TtsRegexRule,
+        b: TtsRegexRule,
+    ): Boolean =
+        a.pattern == b.pattern &&
+            a.replacement == b.replacement &&
+            a.ignoreCase == b.ignoreCase &&
+            a.isRegex == b.isRegex
+
+    private fun signatureOf(rule: TtsRegexRule): String =
+        listOf(
+            rule.pattern,
+            rule.replacement,
+            rule.ignoreCase.toString(),
+            rule.isRegex.toString(),
+        ).joinToString("\u0000")
+
     private fun saveToPreferences(
         prefs: SharedPreferences,
         rules: List<TtsRegexRule>,
     ) {
         val array = JSONArray()
         rules.forEach { array.put(it.toJson()) }
-        prefs.edit()
+
+        prefs
+            .edit()
             .putString(KEY_RULES, array.toString())
             .putInt(KEY_DEFAULT_RULES_VERSION, DEFAULT_RULES_VERSION)
             .apply()
     }
-
-    private data class RuleSignature(
-        val pattern: String,
-        val replacement: String,
-        val ignoreCase: Boolean,
-        val isRegex: Boolean,
-    )
-
-    private fun signatureOf(rule: TtsRegexRule): RuleSignature =
-        RuleSignature(rule.pattern, rule.replacement, rule.ignoreCase, rule.isRegex)
-
-    private fun sameRuleContent(a: TtsRegexRule, b: TtsRegexRule): Boolean =
-        a.name == b.name &&
-            a.pattern == b.pattern &&
-            a.replacement == b.replacement &&
-            a.ignoreCase == b.ignoreCase &&
-            a.isRegex == b.isRegex
 
     private fun defaultRules(): List<TtsRegexRule> =
         listOf(
@@ -197,12 +202,12 @@ object TtsRegexStore {
                 ignoreCase = false,
                 isRegex = true,
             ),
-        ) + v3SpeechRules()
+        ) + speechNormalizationRules()
 
-    private fun v3SpeechRules(): List<TtsRegexRule> =
+    private fun speechNormalizationRules(): List<TtsRegexRule> =
         listOf(
             TtsRegexRule(
-                id = "default-remove-invisible-space",
+                id = "default-remove-zero-width-space",
                 name = "제로폭 문자 제거",
                 pattern = "[\\u200B\\u200C\\u200D\\u2060\\uFEFF]",
                 replacement = "",
@@ -210,7 +215,7 @@ object TtsRegexStore {
                 isRegex = true,
             ),
             TtsRegexRule(
-                id = "default-normalize-special-spaces",
+                id = "default-normalize-nbsp",
                 name = "특수 공백을 일반 공백으로",
                 pattern = "[\\u00A0\\u2007\\u202F\\u3000]+",
                 replacement = " ",
@@ -225,8 +230,15 @@ object TtsRegexStore {
                 ignoreCase = false,
                 isRegex = true,
             ),
-
-            // 분수는 다른 숫자 규칙보다 먼저 처리한다.
+            TtsRegexRule(
+                id = "default-read-comma-decimal-legacy",
+                name = "쉼표 소수점 읽기 (기본 꺼짐)",
+                pattern = "([0-9]+),([0-9]+)",
+                replacement = "${'$'}1점${'$'}2",
+                ignoreCase = false,
+                isRegex = true,
+                enabled = false,
+            ),
             TtsRegexRule(
                 id = "default-read-fraction",
                 name = "분수 읽기",
@@ -235,8 +247,6 @@ object TtsRegexStore {
                 ignoreCase = false,
                 isRegex = true,
             ),
-
-            // 숫자와 단위/통화가 붙어 있는 경우를 단독 소수 규칙보다 먼저 처리한다.
             TtsRegexRule(
                 id = "default-read-percent",
                 name = "퍼센트(%) 읽기",
@@ -301,7 +311,6 @@ object TtsRegexStore {
             unitRule("default-read-meter", "미터(m) 읽기", "m", "미터"),
             unitRule("default-read-gram", "그램(g) 읽기", "g", "그램"),
             unitRule("default-read-liter", "리터(l) 읽기", "l", "리터"),
-
             TtsRegexRule(
                 id = "default-read-decimal",
                 name = "소수점 읽기",
@@ -343,7 +352,11 @@ object TtsRegexStore {
             isRegex = true,
         )
 
-    /** 현재 v2에서 배포된 기본값. v3 마이그레이션 비교 전용이다. */
+    /**
+     * Exact defaults actually shipped in v2.
+     * This must stay byte-for-byte equivalent in pattern/replacement semantics
+     * because migration only updates untouched defaults.
+     */
     private fun v2DefaultRules(): List<TtsRegexRule> =
         listOf(
             TtsRegexRule(
@@ -371,10 +384,18 @@ object TtsRegexStore {
                 isRegex = true,
             ),
             TtsRegexRule(
-                id = "default-remove-invisible-space",
-                name = "제로폭/NBSP 공백 제거",
-                pattern = "[\\u200B\\u00A0]",
+                id = "default-remove-zero-width-space",
+                name = "제로폭 공백 제거",
+                pattern = "\\u200B",
                 replacement = "",
+                ignoreCase = false,
+                isRegex = true,
+            ),
+            TtsRegexRule(
+                id = "default-normalize-nbsp",
+                name = "NBSP를 일반 공백으로",
+                pattern = "\\u00A0",
+                replacement = " ",
                 ignoreCase = false,
                 isRegex = true,
             ),
@@ -385,6 +406,15 @@ object TtsRegexStore {
                 replacement = " ",
                 ignoreCase = false,
                 isRegex = true,
+            ),
+            TtsRegexRule(
+                id = "default-read-comma-decimal-legacy",
+                name = "쉼표 소수점 읽기 (기본 꺼짐)",
+                pattern = "([0-9]+),([0-9]+)",
+                replacement = "${'$'}1 점 ${'$'}2",
+                ignoreCase = false,
+                isRegex = true,
+                enabled = false,
             ),
             TtsRegexRule(
                 id = "default-read-fraction",
@@ -410,18 +440,18 @@ object TtsRegexStore {
                 ignoreCase = false,
                 isRegex = true,
             ),
-            oldV2UnitOrSymbolRule("default-read-percent", "퍼센트(%) 읽기", "([0-9.]+)\\s*%", "${'$'}1 퍼센트", false),
-            oldV2UnitOrSymbolRule("default-read-dollar", "달러(\$) 읽기", "([0-9.]+)\\s*\\${'$'}", "${'$'}1 달러", false),
-            oldV2UnitOrSymbolRule("default-read-yen", "엔(¥) 읽기", "([0-9.]+)\\s*¥", "${'$'}1 엔", false),
-            oldV2UnitOrSymbolRule("default-read-euro", "유로(€) 읽기", "([0-9.]+)\\s*€", "${'$'}1 유로", false),
-            oldV2UnitOrSymbolRule("default-read-kilogram", "킬로그램(kg) 읽기", "([0-9.]+)\\s*kg", "${'$'}1 킬로그램", true),
-            oldV2UnitOrSymbolRule("default-read-kilometer", "킬로미터(km) 읽기", "([0-9.]+)\\s*km", "${'$'}1 킬로미터", true),
-            oldV2UnitOrSymbolRule("default-read-centimeter", "센티미터(cm) 읽기", "([0-9.]+)\\s*cm", "${'$'}1 센티미터", true),
-            oldV2UnitOrSymbolRule("default-read-millimeter", "밀리미터(mm) 읽기", "([0-9.]+)\\s*mm", "${'$'}1 밀리미터", true),
-            oldV2UnitOrSymbolRule("default-read-milliliter", "밀리리터(ml) 읽기", "([0-9.]+)\\s*ml\\b", "${'$'}1 밀리리터", true),
-            oldV2UnitOrSymbolRule("default-read-meter", "미터(m) 읽기", "([0-9.]+)\\s*m\\b", "${'$'}1 미터", true),
-            oldV2UnitOrSymbolRule("default-read-gram", "그램(g) 읽기", "([0-9.]+)\\s*g\\b", "${'$'}1 그램", true),
-            oldV2UnitOrSymbolRule("default-read-liter", "리터(l) 읽기", "([0-9.]+)\\s*l\\b", "${'$'}1 리터", true),
+            oldV2Rule("default-read-percent", "퍼센트(%) 읽기", "([0-9.,]+)\\s*%", "${'$'}1 퍼센트", false),
+            oldV2Rule("default-read-dollar", "달러($) 읽기", "([0-9.,]+)\\s*\\${'$'}", "${'$'}1 달러", false),
+            oldV2Rule("default-read-yen", "엔(¥) 읽기", "([0-9.,]+)\\s*¥", "${'$'}1 엔", false),
+            oldV2Rule("default-read-euro", "유로(€) 읽기", "([0-9.,]+)\\s*€", "${'$'}1 유로", false),
+            oldV2Rule("default-read-kilogram", "킬로그램(kg) 읽기", "([0-9.,]+)\\s*kg\\b", "${'$'}1 킬로그램", true),
+            oldV2Rule("default-read-kilometer", "킬로미터(km) 읽기", "([0-9.,]+)\\s*km\\b", "${'$'}1 킬로미터", true),
+            oldV2Rule("default-read-centimeter", "센티미터(cm) 읽기", "([0-9.,]+)\\s*cm\\b", "${'$'}1 센티미터", true),
+            oldV2Rule("default-read-millimeter", "밀리미터(mm) 읽기", "([0-9.,]+)\\s*mm\\b", "${'$'}1 밀리미터", true),
+            oldV2Rule("default-read-milliliter", "밀리리터(ml) 읽기", "([0-9.,]+)\\s*ml\\b", "${'$'}1 밀리리터", true),
+            oldV2Rule("default-read-meter", "미터(m) 읽기", "([0-9.,]+)\\s*m\\b", "${'$'}1 미터", true),
+            oldV2Rule("default-read-gram", "그램(g) 읽기", "([0-9.,]+)\\s*g\\b", "${'$'}1 그램", true),
+            oldV2Rule("default-read-liter", "리터(l) 읽기", "([0-9.,]+)\\s*l\\b", "${'$'}1 리터", true),
             TtsRegexRule(
                 id = "default-collapse-whitespace",
                 name = "연속 공백 정리",
@@ -432,7 +462,7 @@ object TtsRegexStore {
             ),
         )
 
-    private fun oldV2UnitOrSymbolRule(
+    private fun oldV2Rule(
         id: String,
         name: String,
         pattern: String,
