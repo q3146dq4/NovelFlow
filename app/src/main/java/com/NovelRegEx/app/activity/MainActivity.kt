@@ -109,11 +109,6 @@ class MainActivity : AppCompatActivity() {
         "ACTION_TOGGLE_PLAY" -> ttsController.togglePlayPause()
         "ACTION_NEXT" -> ttsController.next()
         "ACTION_PREV" -> ttsController.previous()
-        TtsRegexSettingsActivity.ACTION_REGEX_PREVIEW_PLAY -> {
-          val text = intent.getStringExtra(TtsRegexSettingsActivity.EXTRA_REGEX_PREVIEW_TEXT).orEmpty()
-          ttsController.playRegexPreview(text)
-        }
-        TtsRegexSettingsActivity.ACTION_REGEX_PREVIEW_STOP -> ttsController.stopRegexPreview()
       }
     }
   }
@@ -239,8 +234,6 @@ class MainActivity : AppCompatActivity() {
       addAction("ACTION_TOGGLE_PLAY")
       addAction("ACTION_NEXT")
       addAction("ACTION_PREV")
-      addAction(TtsRegexSettingsActivity.ACTION_REGEX_PREVIEW_PLAY)
-      addAction(TtsRegexSettingsActivity.ACTION_REGEX_PREVIEW_STOP)
     }
     
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -766,9 +759,6 @@ class MainActivity : AppCompatActivity() {
     private var preloadInFlight = false
 
     private var compiledTtsRules: List<TtsRegexEngine.CompiledRule> = emptyList()
-    private var regexPreviewGeneration = 0
-    private var regexPreviewChunks: List<String> = emptyList()
-    private var regexPreviewQueuedThrough = -1
     private var koreanNumberNormalizationEnabled = true
     private val speakableContentRegex = Regex("[가-힣a-zA-Z0-9]")
 
@@ -1257,169 +1247,6 @@ class MainActivity : AppCompatActivity() {
       clearQueuedSpeechState()
     }
 
-    private fun splitRegexPreviewText(text: String): List<String> {
-      val trimmed = text.trim()
-      if (trimmed.isEmpty()) return emptyList()
-
-      val naturalParts =
-        Regex("""(?<=[,，.!?。！？;；:])\s+|\n+""")
-          .split(trimmed)
-          .map(String::trim)
-          .filter(String::isNotEmpty)
-
-      val maxChunkLength = 120
-      return naturalParts.flatMap { part ->
-        if (part.length <= maxChunkLength) {
-          listOf(part)
-        } else {
-          val chunks = mutableListOf<String>()
-          var remaining = part
-          while (remaining.length > maxChunkLength) {
-            val cut =
-              remaining
-                .lastIndexOf(' ', startIndex = maxChunkLength)
-                .takeIf { it >= maxChunkLength / 2 }
-                ?: maxChunkLength
-            chunks += remaining.substring(0, cut).trim()
-            remaining = remaining.substring(cut).trimStart()
-          }
-          if (remaining.isNotEmpty()) chunks += remaining
-          chunks
-        }
-      }
-    }
-
-    private fun clearRegexPreviewState() {
-      regexPreviewGeneration += 1
-      regexPreviewChunks = emptyList()
-      regexPreviewQueuedThrough = -1
-    }
-
-    fun stopRegexPreview() {
-      clearRegexPreviewState()
-      textToSpeech?.stop()
-    }
-
-    fun playRegexPreview(text: String) {
-      val chunks = splitRegexPreviewText(text)
-      if (chunks.isEmpty()) return
-
-      // 설정 화면에서도 본문과 같은 TextToSpeech 인스턴스를 쓴다.
-      // 별도 TextToSpeech 클라이언트를 만들면 일부 커스텀 엔진에서 재생이 깨질 수 있다.
-      stop()
-      clearRegexPreviewState()
-      if (!ttsReady || textToSpeech == null) {
-        Toast.makeText(this@MainActivity, "TTS 엔진이 아직 준비되지 않았습니다.", Toast.LENGTH_SHORT).show()
-        return
-      }
-
-      regexPreviewChunks = chunks
-      textToSpeech?.setSpeechRate(speed)
-
-      val first = enqueueRegexPreviewChunk(0, TextToSpeech.QUEUE_FLUSH)
-      if (!first) {
-        clearRegexPreviewState()
-        Toast.makeText(this@MainActivity, "TTS 테스트 재생에 실패했습니다.", Toast.LENGTH_SHORT).show()
-        return
-      }
-      fillRegexPreviewQueue(anchorIndex = 0)
-    }
-
-    private fun regexPreviewUtteranceId(index: Int): String =
-      "np_regex_preview_${regexPreviewGeneration}_${index}"
-
-    private fun parseRegexPreviewUtteranceId(utteranceId: String): Pair<Int, Int>? {
-      val prefix = "np_regex_preview_"
-      if (!utteranceId.startsWith(prefix)) return null
-      val parts = utteranceId.removePrefix(prefix).split('_')
-      if (parts.size != 2) return null
-      val previewGeneration = parts[0].toIntOrNull() ?: return null
-      val index = parts[1].toIntOrNull() ?: return null
-      return previewGeneration to index
-    }
-
-    private fun enqueueRegexPreviewChunk(
-      index: Int,
-      queueMode: Int,
-    ): Boolean {
-      if (index !in regexPreviewChunks.indices) return false
-      val text = regexPreviewChunks[index]
-      if (text.isBlank()) return false
-
-      val utteranceId = regexPreviewUtteranceId(index)
-      val params =
-        Bundle().apply {
-          putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId)
-        }
-      val result =
-        textToSpeech?.speak(
-          text,
-          queueMode,
-          params,
-          utteranceId,
-        ) ?: TextToSpeech.ERROR
-      if (result == TextToSpeech.ERROR) return false
-
-      regexPreviewQueuedThrough = maxOf(regexPreviewQueuedThrough, index)
-      return true
-    }
-
-    private fun fillRegexPreviewQueue(anchorIndex: Int) {
-      if (regexPreviewChunks.isEmpty()) return
-
-      val depth = configuredRollingPreQueueDepth().coerceAtLeast(0)
-      val targetTail =
-        (anchorIndex + depth)
-          .coerceAtMost(regexPreviewChunks.lastIndex)
-      var nextIndex = maxOf(regexPreviewQueuedThrough + 1, anchorIndex + 1)
-
-      while (nextIndex <= targetTail) {
-        if (!enqueueRegexPreviewChunk(nextIndex, TextToSpeech.QUEUE_ADD)) return
-        nextIndex += 1
-      }
-    }
-
-    private fun handleRegexPreviewDone(
-      previewGeneration: Int,
-      index: Int,
-    ) {
-      mainHandler.post {
-        if (previewGeneration != regexPreviewGeneration) return@post
-        if (index !in regexPreviewChunks.indices) return@post
-
-        if (index >= regexPreviewChunks.lastIndex) {
-          clearRegexPreviewState()
-          return@post
-        }
-
-        val nextIndex = index + 1
-        if (regexPreviewQueuedThrough < nextIndex) {
-          if (!enqueueRegexPreviewChunk(nextIndex, TextToSpeech.QUEUE_ADD)) {
-            clearRegexPreviewState()
-            Toast.makeText(this@MainActivity, "TTS 테스트 재생 중 오류가 발생했습니다.", Toast.LENGTH_SHORT).show()
-            return@post
-          }
-        }
-        fillRegexPreviewQueue(anchorIndex = nextIndex)
-      }
-    }
-
-    private fun handleRegexPreviewError(
-      previewGeneration: Int,
-      index: Int,
-    ) {
-      mainHandler.post {
-        if (previewGeneration != regexPreviewGeneration) return@post
-        clearRegexPreviewState()
-        textToSpeech?.stop()
-        Toast.makeText(
-          this@MainActivity,
-          "TTS 테스트 ${index + 1}번째 조각 재생에 실패했습니다.",
-          Toast.LENGTH_SHORT,
-        ).show()
-      }
-    }
-
     private fun configuredRollingPreQueueDepth(): Int =
       TtsPreferences.getRollingPrequeueDepth(this@MainActivity)
 
@@ -1790,7 +1617,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onStart(utteranceId: String) {
-      if (parseRegexPreviewUtteranceId(utteranceId) != null) return
       val parsed = parseUtteranceId(utteranceId) ?: return
       if (parsed.first != generation) return
       mainHandler.post {
@@ -1814,7 +1640,6 @@ class MainActivity : AppCompatActivity() {
       end: Int,
       frame: Int,
     ) {
-      if (parseRegexPreviewUtteranceId(utteranceId) != null) return
       val parsed = parseUtteranceId(utteranceId) ?: return
       if (parsed.first != generation) return
       activeChunk ?: return
@@ -1823,10 +1648,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDone(utteranceId: String) {
-      parseRegexPreviewUtteranceId(utteranceId)?.let { (previewGeneration, index) ->
-        handleRegexPreviewDone(previewGeneration, index)
-        return
-      }
       val parsed = parseUtteranceId(utteranceId) ?: return
       if (parsed.first != generation) return
       mainHandler.post {
@@ -1887,10 +1708,6 @@ class MainActivity : AppCompatActivity() {
     override fun onError(utteranceId: String) { onError(utteranceId, TextToSpeech.ERROR) }
 
     override fun onError(utteranceId: String, errorCode: Int) {
-      parseRegexPreviewUtteranceId(utteranceId)?.let { (previewGeneration, index) ->
-        handleRegexPreviewError(previewGeneration, index)
-        return
-      }
       val parsed = parseUtteranceId(utteranceId) ?: return
       if (parsed.first != generation) return
       mainHandler.post {
@@ -2289,7 +2106,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun stop() {
-      clearRegexPreviewState()
       waitingForNextChapter = false
       clearPreloadState()
       active = false
