@@ -1261,32 +1261,10 @@ class MainActivity : AppCompatActivity() {
       val trimmed = text.trim()
       if (trimmed.isEmpty()) return emptyList()
 
-      val naturalParts =
-        Regex("""(?<=[,，.!?。！？;；:])\s+|\n+""")
-          .split(trimmed)
-          .map(String::trim)
-          .filter(String::isNotEmpty)
-
-      val maxChunkLength = 120
-      return naturalParts.flatMap { part ->
-        if (part.length <= maxChunkLength) {
-          listOf(part)
-        } else {
-          val chunks = mutableListOf<String>()
-          var remaining = part
-          while (remaining.length > maxChunkLength) {
-            val cut =
-              remaining
-                .lastIndexOf(' ', startIndex = maxChunkLength)
-                .takeIf { it >= maxChunkLength / 2 }
-                ?: maxChunkLength
-            chunks += remaining.substring(0, cut).trim()
-            remaining = remaining.substring(cut).trimStart()
-          }
-          if (remaining.isNotEmpty()) chunks += remaining
-          chunks
-        }
-      }
+      // Preview is deliberately a single utterance. Tiny QUEUE_ADD fragments can
+      // trigger multilingual auto-detection quirks in some custom Android TTS
+      // engines even when ordinary novel playback sounds correct.
+      return listOf(trimmed.take(TextToSpeech.getMaxSpeechInputLength()))
     }
 
     private fun clearRegexPreviewState() {
@@ -1314,6 +1292,7 @@ class MainActivity : AppCompatActivity() {
       }
 
       regexPreviewChunks = chunks
+      textToSpeech?.setLanguage(Locale.KOREAN)
       textToSpeech?.setSpeechRate(speed)
 
       val first = enqueueRegexPreviewChunk(0, TextToSpeech.QUEUE_FLUSH)

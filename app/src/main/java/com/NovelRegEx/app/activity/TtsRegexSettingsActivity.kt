@@ -106,7 +106,7 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
         }
 
         testInput.setText(
-            "3.14kg, 14.5km, 1,000원, 8,884,844원, 1$, ${'$'}2, 72%, 3.1/100"
+            "3.14kg, 14.5km, 1,000원, 1,234,567원, 1$, ${'$'}2, 72%, 3.1/100"
         )
     }
 
@@ -192,9 +192,9 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
 
         val description = TextView(this).apply {
             text =
-                "ON: ${'$'}{ko-number:1} 치환이 숫자를 한국어 발음으로 바꿉니다. " +
+                "ON: 정규식 적용이 끝난 뒤 일반 숫자를 한국어 한자어 발음으로 바꿉니다. " +
                     "예: 3.14kg → 삼점일사킬로그램, 1,000 → 천.\n" +
-                    "OFF: 숫자 원문을 유지합니다. 예: 3.14kg → 3.14킬로그램."
+                    "OFF: 정규식 치환만 적용하고 숫자는 원문 표기를 유지합니다."
             textSize = 12f
             setTextColor(0xFF555555.toInt())
             setPadding(0, dp(6), 0, 0)
@@ -393,8 +393,8 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
 
         val testHint = TextView(this).apply {
             text =
-                "그룹: \$1, \$2 등 · 한국어 숫자: ${'$'}{ko-number:1}\n" +
-                    "한국어 숫자 기능을 끄면 매크로는 캡처 숫자 원문을 그대로 사용합니다."
+                "치환 그룹은 표준 형식인 \$1, \$2 등을 사용합니다.\n" +
+                    "한국어 숫자 발음 변환은 위의 전역 ON/OFF 설정으로 적용됩니다."
             textSize = 12f
             setTextColor(0xFF777777.toInt())
             setPadding(0, dp(4), 0, dp(8))
