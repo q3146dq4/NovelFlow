@@ -9,7 +9,7 @@ import java.util.regex.Pattern
  * so `${ko-number:N}` behaves identically in both places.
  */
 object TtsRegexEngine {
-    private val koreanNumberMacroPattern = Regex("""\$\{ko-number:\d+}""")
+    private val koreanNumberMacroPattern = Regex("""\$\{ko-number:\d+\}""")
 
     data class CompiledRule(
         val pattern: Pattern,

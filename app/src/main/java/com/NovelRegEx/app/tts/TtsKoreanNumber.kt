@@ -16,7 +16,7 @@ import java.util.regex.Pattern
  *   the captured numeric text is kept as-is.
  */
 object TtsKoreanNumber {
-    private val macroPattern = Pattern.compile("\\$\\{ko-number:(\\d+)}")
+    private val macroPattern = Pattern.compile("\\$\\{ko-number:(\\d+)\\}")
     private val validNumberPattern =
         Pattern.compile("^[+-]?(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\\.[0-9]+)?$")
 
