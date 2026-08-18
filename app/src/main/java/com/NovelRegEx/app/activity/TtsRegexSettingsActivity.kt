@@ -1,8 +1,8 @@
 package com.NovelRegEx.app.activity
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.speech.tts.TextToSpeech
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
@@ -23,7 +23,6 @@ import com.NovelRegEx.app.R
 import com.NovelRegEx.app.tts.TtsRegexRule
 import com.NovelRegEx.app.tts.TtsRegexEngine
 import com.NovelRegEx.app.tts.TtsRegexStore
-import java.util.Locale
 import java.util.UUID
 import java.util.regex.Pattern
 import kotlin.math.roundToInt
@@ -40,10 +39,6 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
     private lateinit var countText: TextView
 
     private var rules = mutableListOf<TtsRegexRule>()
-
-    private var previewTts: TextToSpeech? = null
-    private var previewTtsReady = false
-    private var pendingPreviewText: String? = null
 
     private val exportLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
@@ -113,8 +108,6 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
         testInput.setText(
             "3.14kg, 14.5km, 1,000원, 8,884,844원, 1$, ${'$'}2, 72%, 3.1/100"
         )
-
-        initPreviewTts()
     }
 
     private fun bindViews() {
@@ -144,32 +137,6 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
         }
 
         ViewCompat.requestApplyInsets(rootView)
-    }
-
-    private fun initPreviewTts() {
-        previewTts = TextToSpeech(this) { status ->
-            runOnUiThread {
-                if (status != TextToSpeech.SUCCESS) {
-                    previewTtsReady = false
-                    return@runOnUiThread
-                }
-
-                val languageResult =
-                    previewTts?.setLanguage(Locale.KOREAN)
-                        ?: TextToSpeech.ERROR
-
-                previewTtsReady =
-                    languageResult != TextToSpeech.LANG_MISSING_DATA &&
-                    languageResult != TextToSpeech.LANG_NOT_SUPPORTED
-
-                previewTts?.setSpeechRate(1.0f)
-
-                pendingPreviewText?.let { pending ->
-                    pendingPreviewText = null
-                    speakPreviewNow(pending)
-                }
-            }
-        }
     }
 
     // ============================================================
@@ -581,51 +548,18 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
             return
         }
 
-        if (!previewTtsReady) {
-            pendingPreviewText = text
-            Toast.makeText(
-                this,
-                "TTS 엔진을 준비하는 중입니다.",
-                Toast.LENGTH_SHORT
-            ).show()
-            return
-        }
-
-        speakPreviewNow(text)
-    }
-
-    private fun speakPreviewNow(text: String) {
-        val result =
-            try {
-                previewTts?.stop()
-                previewTts?.setLanguage(Locale.KOREAN)
-                previewTts?.setSpeechRate(1.0f)
-                previewTts?.speak(
-                    text,
-                    TextToSpeech.QUEUE_FLUSH,
-                    null,
-                    "np_regex_preview"
-                ) ?: TextToSpeech.ERROR
-            } catch (error: Throwable) {
-                Toast.makeText(
-                    this,
-                    "TTS 테스트 오류: ${error.message.orEmpty()}",
-                    Toast.LENGTH_LONG
-                ).show()
-                TextToSpeech.ERROR
-            }
-
-        if (result == TextToSpeech.ERROR) {
-            Toast.makeText(
-                this,
-                "TTS 테스트 재생에 실패했습니다.",
-                Toast.LENGTH_LONG
-            ).show()
-        }
+        sendBroadcast(
+            Intent(ACTION_REGEX_PREVIEW_PLAY)
+                .setPackage(packageName)
+                .putExtra(EXTRA_REGEX_PREVIEW_TEXT, text)
+        )
     }
 
     private fun stopPreviewTts() {
-        previewTts?.stop()
+        sendBroadcast(
+            Intent(ACTION_REGEX_PREVIEW_STOP)
+                .setPackage(packageName)
+        )
     }
 
     // ============================================================
@@ -694,10 +628,12 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         stopPreviewTts()
-        previewTts?.shutdown()
-        previewTts = null
-        previewTtsReady = false
         super.onDestroy()
     }
 
+    companion object {
+        const val ACTION_REGEX_PREVIEW_PLAY = "com.NovelRegEx.app.action.REGEX_PREVIEW_PLAY"
+        const val ACTION_REGEX_PREVIEW_STOP = "com.NovelRegEx.app.action.REGEX_PREVIEW_STOP"
+        const val EXTRA_REGEX_PREVIEW_TEXT = "regex_preview_text"
+    }
 }
