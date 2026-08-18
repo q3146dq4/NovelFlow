@@ -9,7 +9,7 @@ object TtsRegexStore {
     private const val KEY_RULES = "tts_regex_rules_v1"
     private const val KEY_DEFAULT_RULES_VERSION = "tts_regex_default_rules_version"
     private const val KEY_KOREAN_NUMBER_ENABLED = "tts_regex_korean_number_enabled_v1"
-    private const val DEFAULT_RULES_VERSION = 5
+    private const val DEFAULT_RULES_VERSION = 6
 
     private const val NUMBER_TOKEN = "(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\\.[0-9]+)?"
 
@@ -101,6 +101,25 @@ object TtsRegexStore {
         val currentVersion = prefs.getInt(KEY_DEFAULT_RULES_VERSION, 1)
         if (currentVersion >= DEFAULT_RULES_VERSION) return rules
 
+        // Emergency one-time repair for builds v3-v6.
+        //
+        // Several previously shipped migrations could leave built-in rules with
+        // old replacements such as "$1점$2", "$1달러", or even "달러$1".
+        // Those rules never invoke ${ko-number:N}, so the global Korean-number
+        // switch appears to do nothing.  Version 6 canonicalizes BUILT-IN rule
+        // IDs exactly once.  Custom user-created rules are preserved.
+        //
+        // Enabled/disabled state is kept for every built-in rule that already
+        // exists.  Deleted built-in rules are restored once because the prior
+        // migrations made it impossible to distinguish a deliberate deletion
+        // from a missing/corrupted default.  After this repair, version 6 is
+        // stored and future user edits/deletions are left untouched.
+        if (currentVersion in 2 until DEFAULT_RULES_VERSION) {
+            val repaired = forceRepairBuiltInDefaults(rules)
+            saveToPreferences(prefs, repaired)
+            return repaired
+        }
+
         val oldV2 = v2DefaultRules()
         val currentDefaults = defaultRules()
         val oldById = oldV2.associateBy { it.id }
@@ -158,6 +177,55 @@ object TtsRegexStore {
         return rules
     }
 
+
+    /**
+     * One-time canonicalization of built-in defaults after the broken v3-v6
+     * migration chain.
+     *
+     * Custom rules are preserved.  Every canonical built-in rule is restored
+     * in canonical order, while preserving the user's enabled state when the
+     * same built-in ID already exists.
+     */
+    private fun forceRepairBuiltInDefaults(
+        rules: MutableList<TtsRegexRule>,
+    ): MutableList<TtsRegexRule> {
+        val defaults = defaultRules()
+        val defaultIds = defaults.mapTo(linkedSetOf()) { it.id }
+
+        val enabledById =
+            rules
+                .asSequence()
+                .filter { it.id in defaultIds }
+                .associate { it.id to it.enabled }
+
+        val obsoleteAliasIds =
+            setOf(
+                "default-remove-invisible-space",
+                "default-normalize-special-spaces",
+            )
+
+        val legacyDefaultSignatures =
+            v2DefaultRules()
+                .mapTo(hashSetOf()) { signatureOf(it) }
+
+        val customRules =
+            rules.filter { rule ->
+                rule.id !in defaultIds &&
+                    rule.id !in obsoleteAliasIds &&
+                    signatureOf(rule) !in legacyDefaultSignatures
+            }
+
+        return buildList {
+            defaults.forEach { default ->
+                add(
+                    default.copy(
+                        enabled = enabledById[default.id] ?: default.enabled,
+                    ),
+                )
+            }
+            addAll(customRules)
+        }.toMutableList()
+    }
 
     /**
      * The first v3 build used two temporary IDs for whitespace rules. Upgrades
