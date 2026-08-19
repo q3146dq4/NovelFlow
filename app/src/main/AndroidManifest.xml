@@ -74,6 +74,12 @@
             android:label="@string/title_activity_bookmark_order"
             android:parentActivityName=".activity.BookmarksActivity" />
 
+        <activity
+            android:name=".activity.UserRulesActivity"
+            android:exported="false"
+            android:label="사용자 규칙"
+            android:parentActivityName=".activity.MainActivity" />
+
         <!-- TTS 정규식 설정 화면 -->
         <activity
             android:name=".activity.TtsRegexSettingsActivity"

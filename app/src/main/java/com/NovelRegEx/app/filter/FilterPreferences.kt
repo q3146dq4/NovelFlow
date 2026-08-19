@@ -11,6 +11,7 @@ object FilterPreferences {
   const val KEY_AUTO_UPDATE = "filters_auto_update"
   const val KEY_SUBSCRIPTIONS = "filters_subscriptions"
   const val KEY_USER_RULES = "filters_user_rules"
+  const val KEY_DISABLED_USER_RULES = "filters_disabled_user_rules"
   const val KEY_LAST_UPDATED_AT = "filters_last_updated_at"
   const val KEY_LAST_UPDATE_ERROR = "filters_last_update_error"
 
@@ -83,12 +84,59 @@ object FilterPreferences {
     setUserRuleLines(context, value.lineSequence().toList())
   }
 
+  fun getDisabledUserRuleLines(context: Context): List<String> {
+    val prefs = prefs(context)
+    val allRules = getUserRuleLines(context)
+    val rawValue = prefs.getString(KEY_DISABLED_USER_RULES, null)
+    val disabled = parseStringList(rawValue, emptyList()).filter { it in allRules }
+    val encoded = encodeStringArray(disabled)
+    if (rawValue != null && rawValue != encoded) {
+      prefs.edit { putString(KEY_DISABLED_USER_RULES, encoded) }
+    }
+    return disabled
+  }
+
+  fun getEnabledUserRuleLines(context: Context): List<String> {
+    val disabled = getDisabledUserRuleLines(context).toHashSet()
+    return getUserRuleLines(context).filter { it !in disabled }
+  }
+
+  fun setDisabledUserRuleLines(
+    context: Context,
+    rules: List<String>,
+  ) {
+    val allRules = getUserRuleLines(context).toHashSet()
+    val normalized = normalizeStringArray(rules).filter { it in allRules }
+    prefs(context).edit {
+      putString(KEY_DISABLED_USER_RULES, encodeStringArray(normalized))
+    }
+  }
+
+  fun setUserRuleEnabled(
+    context: Context,
+    rule: String,
+    enabled: Boolean,
+  ) {
+    val normalizedRule = rule.trim()
+    if (normalizedRule.isEmpty() || normalizedRule !in getUserRuleLines(context)) return
+    val disabled = getDisabledUserRuleLines(context).toMutableSet()
+    if (enabled) {
+      disabled.remove(normalizedRule)
+    } else {
+      disabled += normalizedRule
+    }
+    setDisabledUserRuleLines(context, disabled.toList())
+  }
+
   fun setUserRuleLines(
     context: Context,
     rules: List<String>,
   ) {
+    val normalized = normalizeStringArray(rules)
+    val disabled = getDisabledUserRuleLines(context).filter { it in normalized }
     prefs(context).edit {
-      putString(KEY_USER_RULES, encodeStringArray(rules))
+      putString(KEY_USER_RULES, encodeStringArray(normalized))
+      putString(KEY_DISABLED_USER_RULES, encodeStringArray(disabled))
     }
   }
 

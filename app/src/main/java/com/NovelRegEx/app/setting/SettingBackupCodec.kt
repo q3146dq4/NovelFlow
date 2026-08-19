@@ -92,6 +92,7 @@ object SettingBackupCodec {
       filtersAutoUpdate = prefs.getBoolean(FilterPreferences.KEY_AUTO_UPDATE, true),
       filterSubscriptions = FilterPreferences.getSubscriptionUrls(context),
       filterUserRules = FilterPreferences.getUserRuleLines(context),
+      filterDisabledUserRules = FilterPreferences.getDisabledUserRuleLines(context),
       autoCheckUpdate = prefs.getBoolean("auto_check_update", true),
     )
   }
@@ -116,6 +117,8 @@ object SettingBackupCodec {
       filtersAutoUpdate = json.getBoolean("filtersAutoUpdate"),
       filterSubscriptions = parseStringArray(json.getJSONArray("filterSubscriptions")),
       filterUserRules = parseStringArray(json.getJSONArray("filterUserRules")),
+      filterDisabledUserRules =
+        json.optJSONArray("filterDisabledUserRules")?.let(::parseStringArray).orEmpty(),
       autoCheckUpdate = json.getBoolean("autoCheckUpdate"),
     )
 
@@ -142,6 +145,7 @@ object SettingBackupCodec {
       .put("filtersAutoUpdate", filtersAutoUpdate)
       .put("filterSubscriptions", filterSubscriptions.toJsonArray())
       .put("filterUserRules", filterUserRules.toJsonArray())
+      .put("filterDisabledUserRules", filterDisabledUserRules.toJsonArray())
       .put("autoCheckUpdate", autoCheckUpdate)
 
   private fun List<BookmarkItem>.toJson(): JSONArray {
@@ -209,5 +213,6 @@ data class BackupSettings(
   val filtersAutoUpdate: Boolean,
   val filterSubscriptions: List<String>,
   val filterUserRules: List<String>,
+  val filterDisabledUserRules: List<String>,
   val autoCheckUpdate: Boolean,
 )

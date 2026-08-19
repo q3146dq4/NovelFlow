@@ -28,7 +28,7 @@ class FilterRepository(
 
   fun hasAnyActiveSource(): Boolean =
     FilterPreferences.getSubscriptionUrls(context).isNotEmpty() ||
-      FilterPreferences.getUserRuleLines(context).isNotEmpty()
+      FilterPreferences.getEnabledUserRuleLines(context).isNotEmpty()
 
   @Synchronized
   fun loadRuleSnapshot(forceReload: Boolean = false): RuleSetSnapshot {
@@ -47,7 +47,7 @@ class FilterRepository(
         }
       }
     }
-    ruleLines += FilterPreferences.getUserRuleLines(context)
+    ruleLines += FilterPreferences.getEnabledUserRuleLines(context)
     val snapshot =
       RuleSetSnapshot(
         fingerprint = ruleLines.joinToString(separator = "\u0000") { it }.hashCode().toString(),
@@ -108,7 +108,7 @@ class FilterRepository(
 
   private fun buildStateKey(): String {
     val urls = FilterPreferences.getSubscriptionUrls(context)
-    val userRules = FilterPreferences.getUserRuleLines(context)
+    val userRules = FilterPreferences.getEnabledUserRuleLines(context)
     val sb = StringBuilder()
     urls.forEach { url ->
       val file = fileForUrl(url)

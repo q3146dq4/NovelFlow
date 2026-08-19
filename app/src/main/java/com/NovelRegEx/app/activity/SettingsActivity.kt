@@ -336,21 +336,7 @@ class SettingsActivity : AppCompatActivity() {
       }
 
       findPreference<Preference>(FilterPreferences.KEY_USER_RULES)?.setOnPreferenceClickListener {
-        showMultilineEditor(
-          title = getString(R.string.title_filters_user_rules),
-          initialValue = FilterPreferences.getUserRuleEditorText(requireContext()),
-        ) { value ->
-          FilterPreferences.setUserRulesEditorText(requireContext(), value)
-          lifecycleScope.launch {
-            runCatching {
-              withContext(Dispatchers.IO) {
-                FilterRuntime.getInstance(requireContext()).refreshEngine(force = true)
-              }
-            }
-            refreshFilterPrefs()
-          }
-          Toast.makeText(requireContext(), R.string.msg_filters_saved, Toast.LENGTH_SHORT).show()
-        }
+        startActivity(Intent(requireContext(), UserRulesActivity::class.java))
         true
       }
 
@@ -598,6 +584,7 @@ class SettingsActivity : AppCompatActivity() {
       }
       FilterPreferences.setSubscriptionUrls(requireContext(), settings.filterSubscriptions)
       FilterPreferences.setUserRuleLines(requireContext(), settings.filterUserRules)
+      FilterPreferences.setDisabledUserRuleLines(requireContext(), settings.filterDisabledUserRules)
     }
 
     private fun shouldRefreshFiltersAfterImport(settings: BackupSettings): Boolean {
@@ -608,7 +595,8 @@ class SettingsActivity : AppCompatActivity() {
           true,
         ) != settings.filtersAutoUpdate ||
         FilterPreferences.getSubscriptionUrls(requireContext()) != settings.filterSubscriptions ||
-        FilterPreferences.getUserRuleLines(requireContext()) != settings.filterUserRules
+        FilterPreferences.getUserRuleLines(requireContext()) != settings.filterUserRules ||
+        FilterPreferences.getDisabledUserRuleLines(requireContext()) != settings.filterDisabledUserRules
     }
 
     private fun refreshImportedSettingsUi() {

@@ -91,6 +91,10 @@ class MainActivity : AppCompatActivity() {
     loadAssetText("novelregex-tts.js")
   }
 
+  private val viewerSettingsScript by lazy {
+    loadAssetText("novelregex-viewer-settings.js")
+  }
+
   private val bookmarkLauncher =
     registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
       val url = result.data?.getStringExtra(BookmarksActivity.EXTRA_SELECTED_URL) ?: return@registerForActivityResult
@@ -303,6 +307,7 @@ class MainActivity : AppCompatActivity() {
     webView.addJavascriptInterface(ScrollRestoreInterface(), "_ScrollRestore")
     webView.addJavascriptInterface(FilterCssInterface(), "_AdFilter")
     webView.addJavascriptInterface(TtsJavascriptInterface(), "_NPTTS")
+    webView.addJavascriptInterface(ViewerSettingsBridge(this), "_NovelRegExSettings")
 
     if (supportsDocumentStartScript) {
       documentStartScripts.forEach { script ->
@@ -504,7 +509,12 @@ class MainActivity : AppCompatActivity() {
     webView.setOnLongClickListener { showMainMenu(); true }
   }
 
-  private fun installTtsScript(view: WebView) { view.evaluateJavascript(ttsScript, null) }
+  private fun installTtsScript(view: WebView) {
+    view.evaluateJavascript(ttsScript, null)
+    if (view === webView) {
+      view.evaluateJavascript(viewerSettingsScript, null)
+    }
+  }
 
   private fun showMainMenu() {
     val menuItems = listOf(
@@ -704,12 +714,20 @@ class MainActivity : AppCompatActivity() {
       ?.let { webView.loadUrl(it) }
   }
 
+  fun refreshTtsPreferencesFromViewerSettings() {
+    ttsController.refreshCompiledTtsRules()
+  }
+
   override fun onResume() {
     super.onResume()
     keepWebViewTimersRunning()
     if (::preloadWebView.isInitialized) preloadWebView.onResume()
     ttsController.refreshCompiledTtsRules()
     ttsController.refreshSystemTtsEngineIfChanged()
+    webView.evaluateJavascript(
+      "window.__novelregexViewerSettings&&window.__novelregexViewerSettings.refresh&&window.__novelregexViewerSettings.refresh();",
+      null,
+    )
     val prefs = PreferenceManager.getDefaultSharedPreferences(this)
     swipeRefresh.triggerFraction = prefs.getString("swipe_fraction", null)?.toFloatOrNull() ?: TopSwipeRefreshLayout.DEFAULT_TRIGGER_FRACTION
   }
