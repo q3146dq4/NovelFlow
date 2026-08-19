@@ -36,7 +36,6 @@ import com.NovelRegEx.app.setting.BackupSettings
 import com.NovelRegEx.app.setting.SettingBackup
 import com.NovelRegEx.app.setting.SettingBackupCodec
 import com.NovelRegEx.app.tts.TtsPreferences
-import com.NovelRegEx.app.tts.TtsPronunciationDictionary
 import com.NovelRegEx.app.tts.TtsRegexStore
 import org.json.JSONObject
 import com.NovelRegEx.app.update.UpdateChecker
@@ -575,9 +574,6 @@ class SettingsActivity : AppCompatActivity() {
       }
       settings.ttsStopEpisodes?.let {
         TtsPreferences.importStopEpisodes(requireContext(), it)
-      }
-      settings.ttsPronunciationDictionaryJson?.let {
-        TtsPronunciationDictionary.importJson(requireContext(), JSONObject(it))
       }
       FilterPreferences.setSubscriptionUrls(requireContext(), settings.filterSubscriptions)
       FilterPreferences.setUserRuleLines(requireContext(), settings.filterUserRules)

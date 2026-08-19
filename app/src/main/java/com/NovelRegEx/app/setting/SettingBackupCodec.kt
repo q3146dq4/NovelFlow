@@ -6,7 +6,6 @@ import com.NovelRegEx.app.bookmark.BookmarkItem
 import com.NovelRegEx.app.bookmark.BookmarkRepository
 import com.NovelRegEx.app.filter.FilterPreferences
 import com.NovelRegEx.app.tts.TtsPreferences
-import com.NovelRegEx.app.tts.TtsPronunciationDictionary
 import com.NovelRegEx.app.tts.TtsRegexRule
 import com.NovelRegEx.app.tts.TtsRegexStore
 import org.json.JSONArray
@@ -105,7 +104,6 @@ object SettingBackupCodec {
       ttsSpeechRate = TtsPreferences.getSpeechRate(context),
       ttsSleepMinutes = TtsPreferences.getSleepMinutes(context),
       ttsStopEpisodes = TtsPreferences.exportStopEpisodes(context),
-      ttsPronunciationDictionaryJson = TtsPronunciationDictionary.exportJson(context).toString(),
     )
   }
 
@@ -176,8 +174,6 @@ object SettingBackupCodec {
             }
           }
         } else null,
-      ttsPronunciationDictionaryJson =
-        if (schemaVersion >= 2) json.optJSONObject("ttsPronunciationDictionary")?.toString() else null,
     )
 
   private fun parseBookmarks(array: JSONArray): List<BookmarkItem> =
@@ -215,7 +211,6 @@ object SettingBackupCodec {
         "ttsStopEpisodes",
         JSONObject().apply { ttsStopEpisodes.orEmpty().forEach { (novelNo, episode) -> put(novelNo, episode) } },
       )
-      .put("ttsPronunciationDictionary", ttsPronunciationDictionaryJson?.let(::JSONObject) ?: JSONObject())
 
   private fun List<BookmarkItem>.toJson(): JSONArray {
     val array = JSONArray()
@@ -291,5 +286,4 @@ data class BackupSettings(
   val ttsSpeechRate: Float? = null,
   val ttsSleepMinutes: Int? = null,
   val ttsStopEpisodes: Map<String, Int>? = null,
-  val ttsPronunciationDictionaryJson: String? = null,
 )
