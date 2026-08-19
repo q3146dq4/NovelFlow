@@ -308,13 +308,6 @@
         "tts_engine_package",
       ),
     );
-    panel.appendChild(
-      createNavigationRow(
-        "시스템 TTS 설정",
-        "",
-        "openSystemTtsSettings",
-      ),
-    );
     const chunkOptions = [["comma", "쉼표"], ["sentence", "마침표"], ["paragraph", "문단"]];
     panel.appendChild(
       createNativeChoiceRow(

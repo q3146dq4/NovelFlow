@@ -36,6 +36,9 @@ import com.NovelRegEx.app.setting.BackupSettings
 import com.NovelRegEx.app.setting.SettingBackup
 import com.NovelRegEx.app.setting.SettingBackupCodec
 import com.NovelRegEx.app.tts.TtsPreferences
+import com.NovelRegEx.app.tts.TtsPronunciationDictionary
+import com.NovelRegEx.app.tts.TtsRegexStore
+import org.json.JSONObject
 import com.NovelRegEx.app.update.UpdateChecker
 import com.NovelRegEx.app.update.UpdateInfo
 import com.NovelRegEx.app.update.UpdateResult
@@ -559,6 +562,22 @@ class SettingsActivity : AppCompatActivity() {
         putBoolean(FilterPreferences.KEY_ENABLED, settings.filtersEnabled)
         putBoolean(FilterPreferences.KEY_AUTO_UPDATE, settings.filtersAutoUpdate)
         putBoolean("auto_check_update", settings.autoCheckUpdate)
+        settings.ttsEnginePackage?.let { putString("tts_engine_package", it) }
+        settings.ttsSpeechRate?.let { putFloat(TtsPreferences.KEY_SPEECH_RATE, it) }
+        settings.ttsSleepMinutes?.let { putInt(TtsPreferences.KEY_SLEEP_MINUTES, it) }
+      }
+      settings.ttsRegexRules?.let { TtsRegexStore.save(requireContext(), it) }
+      settings.ttsNovelRegexRulesJson?.let {
+        TtsRegexStore.importNovelRulesJson(requireContext(), JSONObject(it))
+      }
+      settings.ttsKoreanNumberEnabled?.let {
+        TtsRegexStore.setKoreanNumberEnabled(requireContext(), it)
+      }
+      settings.ttsStopEpisodes?.let {
+        TtsPreferences.importStopEpisodes(requireContext(), it)
+      }
+      settings.ttsPronunciationDictionaryJson?.let {
+        TtsPronunciationDictionary.importJson(requireContext(), JSONObject(it))
       }
       FilterPreferences.setSubscriptionUrls(requireContext(), settings.filterSubscriptions)
       FilterPreferences.setUserRuleLines(requireContext(), settings.filterUserRules)

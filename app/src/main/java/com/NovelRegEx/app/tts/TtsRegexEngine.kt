@@ -76,8 +76,8 @@ object TtsRegexEngine {
                     } else {
                         rule.pattern.matcher(result).replaceAll(rule.replacement)
                     }
-                } catch (_: Throwable) {
-                    // User-editable rules must not terminate playback or the settings screen.
+                } catch (_: Exception) {
+                    // Invalid user rules must not terminate playback; VM/system errors are not swallowed.
                     result
                 }
         }

@@ -22,6 +22,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.text.InputType
 import android.provider.Settings
 import android.net.wifi.WifiManager
 import android.speech.tts.TextToSpeech
@@ -39,6 +40,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.BaseAdapter
+import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -166,6 +168,8 @@ class MainActivity : AppCompatActivity() {
   )
 
   private data class CollectedTtsChapter(
+    val novelNo: String,
+    val episodeNumber: Int,
     val episode: String,
     val title: String,
     val nextChapterUrl: String?,
@@ -234,6 +238,18 @@ class MainActivity : AppCompatActivity() {
     fun stop() {
       runOnUiThread {
         if (isNovelpiaUrl(webView.url)) ttsController.stop()
+      }
+    }
+
+    @Suppress("unused")
+    @JavascriptInterface
+    fun onEpisodeRange(novelNo: String, currentEpisode: Int, latestEpisode: Int) {
+      if (!novelNo.matches(Regex("""\d+"""))) return
+      if (currentEpisode <= 0 || latestEpisode <= 0) return
+      runOnUiThread {
+        if (isViewerUrl(webView.url)) {
+          ttsController.updateEpisodeRange(novelNo, currentEpisode, latestEpisode)
+        }
       }
     }
   }
@@ -636,7 +652,75 @@ class MainActivity : AppCompatActivity() {
       MainMenuAction.Bookmarks -> openBookmarks()
       MainMenuAction.StartPage -> openStartPage()
       MainMenuAction.Settings -> startActivity(Intent(this, SettingsActivity::class.java))
-      MainMenuAction.TtsSettings -> startActivity(Intent(this, TtsSettingsActivity::class.java))
+      MainMenuAction.TtsSettings -> openTtsSettings()
+    }
+  }
+
+  private fun resolveCurrentNovelNo(onResult: (String?) -> Unit) {
+    val cached =
+      if (::ttsController.isInitialized) ttsController.currentNovelNoForSettings()
+      else null
+    if (cached != null) {
+      onResult(cached)
+      return
+    }
+
+    if (!currentPageIsViewer) {
+      onResult(null)
+      return
+    }
+
+    webView.evaluateJavascript(
+      "(function(){var n=document.getElementById('novel_no');return n&&n.value?String(n.value):'';})()",
+    ) { raw ->
+      runOnUiThread {
+        val novelNo =
+          runCatching { JSONTokener(raw ?: "null").nextValue() as? String }
+            .getOrNull()
+            ?.trim()
+            ?.takeIf { it.matches(Regex("[0-9]+")) }
+        onResult(novelNo)
+      }
+    }
+  }
+
+  private fun openTtsSettings() {
+    resolveCurrentNovelNo { novelNo ->
+      startActivity(
+        Intent(this, TtsSettingsActivity::class.java).apply {
+          novelNo?.let { putExtra(TtsSettingsActivity.EXTRA_NOVEL_NO, it) }
+        },
+      )
+    }
+  }
+
+  fun openTtsRegexScopeDialog() {
+    resolveCurrentNovelNo { novelNo ->
+      val labels =
+        if (novelNo != null) {
+          arrayOf("전역 TTS 정규식", "현재 작품 TTS 정규식")
+        } else {
+          arrayOf("전역 TTS 정규식")
+        }
+
+      AlertDialog.Builder(this)
+        .setTitle("TTS 정규식")
+        .setItems(labels) { _, which ->
+          val scope =
+            if (which == 1 && novelNo != null) {
+              TtsRegexSettingsActivity.SCOPE_NOVEL
+            } else {
+              TtsRegexSettingsActivity.SCOPE_GLOBAL
+            }
+          startActivity(
+            Intent(this, TtsRegexSettingsActivity::class.java).apply {
+              putExtra(TtsRegexSettingsActivity.EXTRA_SCOPE, scope)
+              novelNo?.let { putExtra(TtsRegexSettingsActivity.EXTRA_NOVEL_NO, it) }
+            },
+          )
+        }
+        .setNegativeButton("취소", null)
+        .show()
     }
   }
 
@@ -908,8 +992,19 @@ class MainActivity : AppCompatActivity() {
     private var currentChunkIndex = -1
     private var active = false
     private var paused = false
-    private var speed = 1.0f
+    private var speed = TtsPreferences.getSpeechRate(this@MainActivity)
     private var bingeMode = true
+
+    private var currentNovelNo = ""
+    private var currentEpisodeNumber = 0
+    private var latestEpisodeNumber = 0
+    private var stopEpisodeEnabled = false
+    private var stopEpisodeTarget = 0
+    private var sleepTimerDeadline = 0L
+    private var sleepTimerRunnable: Runnable? = null
+    private var nextChapterTransitionStartedAt = 0L
+    private var nextChapterReloadCycles = 0
+    private val nextChapterTransitionTimeoutMs = 45_000L
     private var waitingForNextChapter = false
     private var generation = 0
     private var retryCount = 0
@@ -934,6 +1029,9 @@ class MainActivity : AppCompatActivity() {
     private var playPauseButton: TextView? = null
     private var modeText: TextView? = null
     private var speedText: TextView? = null
+    private var sleepText: TextView? = null
+    private var stopEpisodeText: TextView? = null
+    private var regexText: TextView? = null
     private var progressContainer: android.widget.FrameLayout? = null
     private var progressView: TtsProgressView? = null
 
@@ -1561,6 +1659,8 @@ class MainActivity : AppCompatActivity() {
       }
 
       return CollectedTtsChapter(
+        novelNo = root.optString("novelNo").trim(),
+        episodeNumber = root.optInt("episodeNumber", 0),
         episode = root.optString("episode").trim(),
         title = root.optString("title").trim(),
         nextChapterUrl = root.optString("nextChapterUrl").trim().takeIf { it.isNotEmpty() },
@@ -1573,6 +1673,7 @@ class MainActivity : AppCompatActivity() {
       mode: String,
       rules: List<TtsRegexEngine.CompiledRule>,
       koreanNumberEnabled: Boolean,
+      novelNo: String? = currentNovelNo.takeIf { it.isNotBlank() },
     ): List<TtsSpeechChunk> {
       val built =
         TtsChunkBuilder.build(
@@ -1622,7 +1723,6 @@ class MainActivity : AppCompatActivity() {
       val buildSerial = ++chunkBuildSerial
       chapterBuildInProgress = true
       val mode = TtsPreferences.getChunkMode(this@MainActivity)
-      val rulesSnapshot = compiledTtsRules.toList()
       val koreanNumberSnapshot = koreanNumberNormalizationEnabled
 
       lifecycleScope.launch {
@@ -1631,12 +1731,20 @@ class MainActivity : AppCompatActivity() {
             runCatching {
               val chapter = parseCollectedChapter(decoded)
               require(chapter.sentences.isNotEmpty()) { "No TTS sentences" }
+              val rulesSnapshot =
+                TtsRegexEngine.compile(
+                  TtsRegexStore.loadEffective(
+                    context = this@MainActivity,
+                    novelNo = chapter.novelNo.takeIf { it.matches(Regex("[0-9]+")) },
+                  ),
+                )
               val chunks =
                 buildTtsChunks(
                   sourceSentences = chapter.sentences,
                   mode = mode,
                   rules = rulesSnapshot,
                   koreanNumberEnabled = koreanNumberSnapshot,
+                  novelNo = chapter.novelNo.takeIf { it.isNotBlank() },
                 )
               require(chunks.isNotEmpty()) { "No TTS chunks" }
               chapter to chunks
@@ -1669,6 +1777,13 @@ class MainActivity : AppCompatActivity() {
             if (chapter.episode.isNotEmpty() && chapter.title.isNotEmpty()) append(' ')
             if (chapter.title.isNotEmpty()) append(chapter.title)
           }.ifBlank { webView.title.orEmpty() }
+
+        if (chapter.novelNo.matches(Regex("[0-9]+")) && chapter.novelNo != currentNovelNo) {
+          currentNovelNo = chapter.novelNo
+          refreshCompiledTtsRules()
+        }
+        if (chapter.episodeNumber > 0) currentEpisodeNumber = chapter.episodeNumber
+        requestEpisodeRange()
 
         sentences.clear()
         sentences.addAll(chapter.sentences)
@@ -1709,9 +1824,15 @@ class MainActivity : AppCompatActivity() {
       koreanNumberNormalizationEnabled = TtsRegexStore.isKoreanNumberEnabled(this@MainActivity)
       compiledTtsRules =
         TtsRegexEngine.compile(
-          TtsRegexStore.load(this@MainActivity),
+          TtsRegexStore.loadEffective(
+            context = this@MainActivity,
+            novelNo = currentNovelNo.takeIf { it.matches(Regex("[0-9]+")) },
+          ),
         )
     }
+
+    fun currentNovelNoForSettings(): String? =
+      currentNovelNo.takeIf { it.matches(Regex("[0-9]+")) }
 
     fun needsBackgroundWebView(): Boolean = active || waitingForNextChapter || preloadInFlight
 
@@ -1851,6 +1972,18 @@ class MainActivity : AppCompatActivity() {
       }
 
       if (forNextChapter && waitingForNextChapter) {
+        if (
+          nextChapterTransitionStartedAt > 0L &&
+          android.os.SystemClock.elapsedRealtime() - nextChapterTransitionStartedAt >= nextChapterTransitionTimeoutMs
+        ) {
+          failNextChapterTransition()
+          return
+        }
+        if (nextChapterReloadCycles >= 2) {
+          failNextChapterTransition()
+          return
+        }
+        nextChapterReloadCycles++
         webView.reload()
         mainHandler.postDelayed({
           collectAndStart(0, forNextChapter = true, startAnchor = null)
@@ -2431,7 +2564,28 @@ class MainActivity : AppCompatActivity() {
 
     private fun finishEpisode() {
       if (!active) return
+
+      if (stopEpisodeEnabled && stopEpisodeTarget > 0 && currentEpisodeNumber >= stopEpisodeTarget) {
+        stopEpisodeEnabled = false
+        active = false
+        paused = false
+        waitingForNextChapter = false
+        textToSpeech?.stop()
+        syncPlaybackLocks()
+        updatePlayButton()
+        progressView?.progress = 1f
+        updateAutomationLabels()
+        Toast.makeText(
+          this@MainActivity,
+          "${currentEpisodeNumber}화까지 재생을 완료했습니다.",
+          Toast.LENGTH_SHORT,
+        ).show()
+        return
+      }
+
       if (bingeMode) {
+        nextChapterTransitionStartedAt = android.os.SystemClock.elapsedRealtime()
+        nextChapterReloadCycles = 0
         active = false
         waitingForNextChapter = true
         nextChapterRetryCount = 0
@@ -2454,6 +2608,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun requestNextChapter(attempt: Int) {
       if (!waitingForNextChapter || !currentPageIsViewer || nextChapterNavigationStarted) return
+      if (
+        nextChapterTransitionStartedAt > 0L &&
+        android.os.SystemClock.elapsedRealtime() - nextChapterTransitionStartedAt >= nextChapterTransitionTimeoutMs
+      ) {
+        failNextChapterTransition()
+        return
+      }
       nextChapterRetryCount = attempt
       val currentUrl = pendingChapterFromUrl ?: webView.url
 
@@ -2539,6 +2700,11 @@ class MainActivity : AppCompatActivity() {
               requestNextChapter(attempt + 1)
             }, 300L)
           } else {
+            if (nextChapterReloadCycles >= 2) {
+              failNextChapterTransition()
+              return@post
+            }
+            nextChapterReloadCycles++
             mainHandler.postDelayed({
               if (!waitingForNextChapter || nextChapterNavigationStarted) return@postDelayed
               webView.reload()
@@ -2549,27 +2715,44 @@ class MainActivity : AppCompatActivity() {
       }
     }
 
-    fun previous() {
+    private fun moveChunkBy(delta: Int) {
       if (playbackChunks.isEmpty()) return
-      currentChunkIndex = (currentChunkIndex - 2).coerceAtLeast(-1)
-      currentSentencePartIndex = 0
+
+      val wasPlaying = active && !paused
+      val wasPaused = paused
+      val baseIndex = currentChunkIndex.coerceIn(-1, playbackChunks.lastIndex)
+      val targetIndex = (baseIndex + delta).coerceIn(0, playbackChunks.lastIndex)
+      val targetChunk = playbackChunks[targetIndex]
+
       advanceGeneration()
       textToSpeech?.stop()
-      active = true
-      paused = false
-      syncPlaybackLocks()
-      speakNext()
+
+      currentChunkIndex = targetIndex
+      currentSentenceIndex = targetChunk.startSentenceIndex
+      currentSentencePartIndex = targetChunk.commaPartIndex ?: 0
+      activeChunk = targetChunk
+      updateProgress(targetIndex)
+      highlightCurrentChunk()
+
+      if (wasPlaying) {
+        active = true
+        paused = false
+        syncPlaybackLocks()
+        speakCurrent()
+      } else {
+        active = false
+        paused = wasPaused
+        syncPlaybackLocks()
+        updatePlayButton()
+      }
+    }
+
+    fun previous() {
+      moveChunkBy(-1)
     }
 
     fun next() {
-      if (playbackChunks.isEmpty()) return
-      currentSentencePartIndex = 0
-      advanceGeneration()
-      textToSpeech?.stop()
-      active = true
-      paused = false
-      syncPlaybackLocks()
-      speakNext()
+      moveChunkBy(1)
     }
 
     fun togglePlayPause() {
@@ -2614,28 +2797,311 @@ class MainActivity : AppCompatActivity() {
       advanceGeneration()
       textToSpeech?.stop()
       updatePlayButton()
+    }    private fun adjustSpeed(delta: Float) {
+      val stepped = ((speed * 10f).roundToInt() + (delta * 10f).roundToInt()) / 10f
+      val newSpeed = stepped.coerceIn(TtsPreferences.MIN_SPEECH_RATE, TtsPreferences.MAX_SPEECH_RATE)
+      if (abs(newSpeed - speed) < 0.001f) return
+      speed = newSpeed
+      TtsPreferences.setSpeechRate(this@MainActivity, speed)
+      textToSpeech?.setSpeechRate(speed)
+      speedText?.text = String.format(Locale.US, "%.1fx", speed)
+
+      if (active && !paused) {
+        val restartIndex = currentChunkIndex
+        if (restartIndex in playbackChunks.indices) {
+          textToSpeech?.stop()
+          advanceGeneration()
+          currentChunkIndex = restartIndex
+          val chunk = playbackChunks[restartIndex]
+          currentSentenceIndex = chunk.startSentenceIndex
+          currentSentencePartIndex = chunk.commaPartIndex ?: 0
+          speakCurrent()
+        }
+        updateMediaNotification(true)
+      }
     }
 
-    private fun cycleSpeed() {
-      val values = floatArrayOf(0.8f, 1.0f, 1.2f, 1.5f, 2.0f)
-      val currentIndex = values.indexOfFirst { abs(it - speed) < 0.001f }.takeIf { it >= 0 } ?: 1
-      speed = values[(currentIndex + 1) % values.size]
-      textToSpeech?.setSpeechRate(speed)
-      speedText?.text = String.format(Locale.US, "%.1fx ⌄", speed)
-      
-      if (active && !paused) {
-          val restartIndex = currentChunkIndex
-          if (restartIndex in playbackChunks.indices) {
-            textToSpeech?.stop()
-            advanceGeneration()
-            currentChunkIndex = restartIndex
-            val chunk = playbackChunks[restartIndex]
-            currentSentenceIndex = chunk.startSentenceIndex
-            currentSentencePartIndex = chunk.commaPartIndex ?: 0
-            speakCurrent()
+    private fun failNextChapterTransition() {
+      waitingForNextChapter = false
+      nextChapterNavigationStarted = false
+      nextChapterNavigationWatchdogSerial++
+      nextChapterTransitionStartedAt = 0L
+      nextChapterReloadCycles = 0
+      expectedVisibleChapterUrl = null
+      pendingChapterFromUrl = null
+      clearPreloadState()
+      active = false
+      paused = false
+      textToSpeech?.stop()
+      syncPlaybackLocks()
+      updatePlayButton()
+      Toast.makeText(
+        this@MainActivity,
+        "다음화를 불러오지 못했습니다. 화면을 확인해 주세요.",
+        Toast.LENGTH_LONG,
+      ).show()
+    }
+
+    private fun requestEpisodeRange() {
+      if (!currentPageIsViewer) return
+
+      val js =
+        """
+        (async function() {
+          try {
+            var novelNo = (document.getElementById('novel_no') || {}).value || '';
+            var epText = (document.querySelector('.menu-top-tag') || {}).textContent || '';
+            var currentMatch = epText.match(/EP\.\s*(\d+)/i) || epText.match(/(\d+)/);
+            var current = currentMatch ? Number(currentMatch[1]) : 0;
+            if (!novelNo || !current) return;
+
+            var latestFromList = 0;
+            var latestFromSummary = 0;
+
+            function collectEpisodeNumbers(html) {
+              try {
+                var doc = new DOMParser().parseFromString(html, 'text/html');
+                var text = doc.body ? (doc.body.innerText || doc.body.textContent || '') : '';
+                var regex = /\bEP\.\s*(\d+)/ig;
+                var match;
+                var maxValue = 0;
+                while ((match = regex.exec(text)) !== null) {
+                  maxValue = Math.max(maxValue, Number(match[1]) || 0);
+                }
+                return maxValue;
+              } catch (_) {
+                return 0;
+              }
+            }
+
+            async function loadEpisodeList(sort) {
+              try {
+                var body = new URLSearchParams();
+                body.set('novel_no', novelNo);
+                body.set('sort', sort);
+                body.set('page', '0');
+
+                var response = await fetch('/proc/episode_list', {
+                  method: 'POST',
+                  credentials: 'include',
+                  headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+                  },
+                  body: body.toString()
+                });
+                if (!response.ok) return 0;
+                return collectEpisodeNumbers(await response.text());
+              } catch (_) {
+                return 0;
+              }
+            }
+
+            var listValues = await Promise.all([
+              loadEpisodeList('UP'),
+              loadEpisodeList('DOWN')
+            ]);
+            latestFromList = Math.max.apply(Math, [0].concat(listValues));
+
+            try {
+              var workResponse = await fetch('/novel/' + novelNo, {
+                credentials: 'include',
+                cache: 'no-store'
+              });
+
+              if (workResponse.ok) {
+                var workHtml = await workResponse.text();
+                var workDoc = new DOMParser().parseFromString(workHtml, 'text/html');
+
+                var rows = Array.prototype.slice.call(
+                  workDoc.querySelectorAll('.info-count2 p, .info-count p')
+                );
+
+                for (var i = 0; i < rows.length; i++) {
+                  var category = rows[i].querySelector('.category-title');
+                  var categoryText = category ? (category.textContent || '').trim() : '';
+                  if (categoryText !== '회차') continue;
+
+                  var value = rows[i].querySelector('.writer-name, .gray-txt');
+                  var valueText = value ? (value.textContent || '') : (rows[i].textContent || '');
+                  var countMatch = valueText.match(/([\d,]+)\s*회차/);
+                  if (countMatch) {
+                    latestFromSummary =
+                      Number(String(countMatch[1]).replace(/,/g, '')) || 0;
+                    break;
+                  }
+                }
+
+                if (!latestFromSummary) {
+                  var pageText =
+                    workDoc.body
+                      ? (workDoc.body.innerText || workDoc.body.textContent || '')
+                      : '';
+                  var fallback = pageText.match(/회차\s*([\d,]+)\s*회차/);
+                  if (fallback) {
+                    latestFromSummary =
+                      Number(String(fallback[1]).replace(/,/g, '')) || 0;
+                  }
+                }
+              }
+            } catch (_) {}
+
+            var latest = Math.max(current, latestFromList, latestFromSummary);
+
+            if (
+              latest > 0 &&
+              window._NPTTS &&
+              typeof window._NPTTS.onEpisodeRange === 'function'
+            ) {
+              window._NPTTS.onEpisodeRange(String(novelNo), current, latest);
+            }
+          } catch (_) {}
+        })();
+        """.trimIndent()
+
+      webView.evaluateJavascript(js, null)
+    }
+
+    fun updateEpisodeRange(novelNo: String, currentEpisode: Int, latestEpisode: Int) {
+      currentNovelNo = novelNo
+      currentEpisodeNumber = currentEpisode
+      latestEpisodeNumber = latestEpisode
+      updateAutomationLabels()
+    }
+
+    private fun updateAutomationLabels() {
+      sleepText?.text =
+        if (sleepTimerDeadline > android.os.SystemClock.elapsedRealtime()) {
+          val remain =
+            (sleepTimerDeadline - android.os.SystemClock.elapsedRealtime() + 59_999L) / 60_000L
+          "취침 ${remain}분"
+        } else {
+          "취침"
+        }
+      stopEpisodeText?.text =
+        if (stopEpisodeEnabled && stopEpisodeTarget > 0) {
+          "${stopEpisodeTarget}화까지"
+        } else if (currentEpisodeNumber > 0 && latestEpisodeNumber > 0) {
+          "${currentEpisodeNumber}/${latestEpisodeNumber}화"
+        } else {
+          "N화까지"
+        }
+    }
+
+    private fun showSleepTimerDialog() {
+      val input =
+        EditText(this@MainActivity).apply {
+          inputType = InputType.TYPE_CLASS_NUMBER
+          setText(TtsPreferences.getSleepMinutes(this@MainActivity).toString())
+          selectAll()
+        }
+      val dialog =
+        AlertDialog.Builder(this@MainActivity)
+          .setTitle("취침 타이머")
+          .setMessage("몇 분 후 TTS를 정지할지 입력하세요. 마지막 입력값은 저장됩니다.")
+          .setView(input)
+          .setNegativeButton("취소", null)
+          .setNeutralButton("타이머 해제") { _, _ -> cancelSleepTimer() }
+          .setPositiveButton("시작", null)
+          .create()
+      dialog.setOnShowListener {
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+          val minutes = input.text.toString().toIntOrNull()
+          if (minutes == null || minutes !in 1..1440) {
+            input.error = "1~1440분 사이로 입력하세요."
+            return@setOnClickListener
           }
-          updateMediaNotification(true)
+          TtsPreferences.setSleepMinutes(this@MainActivity, minutes)
+          startSleepTimer(minutes)
+          dialog.dismiss()
+        }
       }
+      dialog.show()
+    }
+
+    private fun startSleepTimer(minutes: Int) {
+      cancelSleepTimer(showToast = false)
+      sleepTimerDeadline = android.os.SystemClock.elapsedRealtime() + minutes * 60_000L
+      val runnable =
+        Runnable {
+          sleepTimerDeadline = 0L
+          sleepTimerRunnable = null
+          stop()
+          updateAutomationLabels()
+          Toast.makeText(
+            this@MainActivity,
+            "취침 타이머로 TTS를 정지했습니다.",
+            Toast.LENGTH_SHORT,
+          ).show()
+        }
+      sleepTimerRunnable = runnable
+      mainHandler.postDelayed(runnable, minutes * 60_000L)
+      updateAutomationLabels()
+    }
+
+    private fun cancelSleepTimer(showToast: Boolean = true) {
+      sleepTimerRunnable?.let(mainHandler::removeCallbacks)
+      sleepTimerRunnable = null
+      sleepTimerDeadline = 0L
+      updateAutomationLabels()
+      if (showToast) {
+        Toast.makeText(this@MainActivity, "취침 타이머를 해제했습니다.", Toast.LENGTH_SHORT).show()
+      }
+    }
+
+    private fun showStopEpisodeDialog() {
+      if (currentNovelNo.isBlank() || currentEpisodeNumber <= 0 || latestEpisodeNumber <= 0) {
+        requestEpisodeRange()
+        Toast.makeText(
+          this@MainActivity,
+          "현재/최신 회차 정보를 불러오는 중입니다.",
+          Toast.LENGTH_SHORT,
+        ).show()
+        return
+      }
+
+      val saved =
+        TtsPreferences
+          .getStopEpisode(this@MainActivity, currentNovelNo)
+          .takeIf { it in currentEpisodeNumber..latestEpisodeNumber }
+          ?: latestEpisodeNumber
+
+      val input =
+        EditText(this@MainActivity).apply {
+          inputType = InputType.TYPE_CLASS_NUMBER
+          setText(saved.toString())
+          selectAll()
+        }
+      val dialog =
+        AlertDialog.Builder(this@MainActivity)
+          .setTitle("지정한 화까지 재생")
+          .setMessage("현재 ${currentEpisodeNumber}화 / 최신 ${latestEpisodeNumber}화")
+          .setView(input)
+          .setNegativeButton("취소", null)
+          .setNeutralButton("자동 종료 해제") { _, _ ->
+            stopEpisodeEnabled = false
+            stopEpisodeTarget = 0
+            updateAutomationLabels()
+          }
+          .setPositiveButton("적용", null)
+          .create()
+
+      dialog.setOnShowListener {
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+          val target = input.text.toString().toIntOrNull()
+          if (target == null || target !in currentEpisodeNumber..latestEpisodeNumber) {
+            input.error = "${currentEpisodeNumber}~${latestEpisodeNumber} 사이로 입력하세요."
+            return@setOnClickListener
+          }
+          TtsPreferences.setStopEpisode(this@MainActivity, currentNovelNo, target)
+          stopEpisodeTarget = target
+          stopEpisodeEnabled = true
+          bingeMode = true
+          modeText?.text = "정주행"
+          updateAutomationLabels()
+          dialog.dismiss()
+        }
+      }
+      dialog.show()
     }
 
     fun isOverlayVisible(): Boolean {
@@ -2651,6 +3117,9 @@ class MainActivity : AppCompatActivity() {
       playPauseButton = findViewById(R.id.tts_play_pause_button)
       modeText = findViewById(R.id.tts_mode_text)
       speedText = findViewById(R.id.tts_speed_text)
+      sleepText = findViewById(R.id.tts_sleep_text)
+      stopEpisodeText = findViewById(R.id.tts_stop_episode_text)
+      regexText = findViewById(R.id.tts_regex_text)
       progressContainer = findViewById(R.id.tts_progress_container)
 
       val closeButton: TextView = findViewById(R.id.tts_close_button)
@@ -2667,7 +3136,13 @@ class MainActivity : AppCompatActivity() {
         (it as TextView).text = if (bingeMode) "정주행" else "한 화"
       }
 
-      speedText?.setOnClickListener { cycleSpeed() }
+      findViewById<TextView>(R.id.tts_speed_minus).setOnClickListener { adjustSpeed(-0.1f) }
+      findViewById<TextView>(R.id.tts_speed_plus).setOnClickListener { adjustSpeed(0.1f) }
+      speedText?.text = String.format(Locale.US, "%.1fx", speed)
+      sleepText?.setOnClickListener { showSleepTimerDialog() }
+      stopEpisodeText?.setOnClickListener { showStopEpisodeDialog() }
+      regexText?.setOnClickListener { this@MainActivity.openTtsRegexScopeDialog() }
+      updateAutomationLabels()
 
       if (progressView == null) {
         progressView = TtsProgressView(this@MainActivity).apply { setOnSeekListener { fraction -> seekByFraction(fraction) } }
@@ -2719,7 +3194,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun updatePlayButton() {
       val isPlaying = active && !paused
-      playPauseButton?.text = if (isPlaying) "Ⅱ" else "▶"
+      playPauseButton?.apply {
+        text = if (isPlaying) "Ⅱ" else "▶"
+        contentDescription = if (isPlaying) "일시정지" else "재생"
+      }
       updateMediaNotification(isPlaying)
     }
 
@@ -2814,7 +3292,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun stop() {
+      cancelSleepTimer(showToast = false)
       waitingForNextChapter = false
+      nextChapterTransitionStartedAt = 0L
+      nextChapterReloadCycles = 0
       chunkBuildSerial++
       chapterBuildInProgress = false
       clearPreloadState()
@@ -2863,12 +3344,13 @@ class MainActivity : AppCompatActivity() {
     var progress: Float = 0f
       set(value) { field = value.coerceIn(0f, 1f); invalidate() }
     private var listener: ((Float) -> Unit)? = null
+    private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+
     fun setOnSeekListener(listener: (Float) -> Unit) { this.listener = listener }
 
     override fun onDraw(canvas: android.graphics.Canvas) {
       super.onDraw(canvas)
       val centerY = height / 2f
-      val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
       paint.color = Color.WHITE
       paint.strokeWidth = 4f
       paint.strokeCap = android.graphics.Paint.Cap.ROUND

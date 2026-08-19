@@ -17,10 +17,11 @@
             android:gravity="center_vertical">
 
             <TextView
+                android:id="@+id/tts_regex_title"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="TTS 정규식 설정"
+                android:text="전역 TTS 정규식"
                 android:textSize="22sp"
                 android:textStyle="bold" />
 

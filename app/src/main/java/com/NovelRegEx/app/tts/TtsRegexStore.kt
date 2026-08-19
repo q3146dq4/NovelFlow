@@ -4,9 +4,11 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.preference.PreferenceManager
 import org.json.JSONArray
+import org.json.JSONObject
 
 object TtsRegexStore {
     private const val KEY_RULES = "tts_regex_rules_v1"
+    private const val KEY_NOVEL_RULES_PREFIX = "tts_regex_rules_novel_v1_"
     private const val KEY_DEFAULT_RULES_VERSION = "tts_regex_default_rules_version"
     private const val KEY_KOREAN_NUMBER_ENABLED = "tts_regex_korean_number_enabled_v1"
     private const val DEFAULT_RULES_VERSION = 8
@@ -85,6 +87,107 @@ object TtsRegexStore {
             saveToPreferences(PreferenceManager.getDefaultSharedPreferences(context), imported)
             imported.size
         }
+
+    fun loadNovel(
+        context: Context,
+        novelNo: String,
+    ): MutableList<TtsRegexRule> {
+        if (!novelNo.matches(Regex("[0-9]+"))) return mutableListOf()
+        val raw =
+            PreferenceManager
+                .getDefaultSharedPreferences(context)
+                .getString(KEY_NOVEL_RULES_PREFIX + novelNo, null)
+                ?: return mutableListOf()
+
+        return runCatching {
+            val array = JSONArray(raw)
+            buildList {
+                for (i in 0 until array.length()) {
+                    val rule = TtsRegexRule.fromJson(array.getJSONObject(i))
+                    if (rule.pattern.isNotEmpty()) add(rule)
+                }
+            }.toMutableList()
+        }.getOrElse { mutableListOf() }
+    }
+
+    fun saveNovel(
+        context: Context,
+        novelNo: String,
+        rules: List<TtsRegexRule>,
+    ) {
+        require(novelNo.matches(Regex("[0-9]+")))
+        val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+        if (rules.isEmpty()) {
+            prefs.edit().remove(KEY_NOVEL_RULES_PREFIX + novelNo).apply()
+            return
+        }
+
+        val array = JSONArray()
+        rules.forEach { array.put(it.toJson()) }
+        prefs.edit().putString(KEY_NOVEL_RULES_PREFIX + novelNo, array.toString()).apply()
+    }
+
+    fun loadEffective(
+        context: Context,
+        novelNo: String?,
+    ): MutableList<TtsRegexRule> =
+        buildList {
+            addAll(load(context))
+            if (novelNo != null && novelNo.matches(Regex("[0-9]+"))) {
+                addAll(loadNovel(context, novelNo))
+            }
+        }.toMutableList()
+
+    fun exportNovelRulesJson(context: Context): JSONObject {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+        return JSONObject().apply {
+            prefs.all.keys
+                .asSequence()
+                .filter { it.startsWith(KEY_NOVEL_RULES_PREFIX) }
+                .map { it.removePrefix(KEY_NOVEL_RULES_PREFIX) }
+                .filter { it.matches(Regex("[0-9]+")) }
+                .sorted()
+                .forEach { novelNo ->
+                    val array = JSONArray()
+                    loadNovel(context, novelNo).forEach { array.put(it.toJson()) }
+                    put(novelNo, array)
+                }
+        }
+    }
+
+    fun importNovelRulesJson(
+        context: Context,
+        json: JSONObject,
+    ) {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+        val parsed = linkedMapOf<String, String>()
+
+        val keys = json.keys()
+        while (keys.hasNext()) {
+            val novelNo = keys.next()
+            if (!novelNo.matches(Regex("[0-9]+"))) continue
+            val array = json.optJSONArray(novelNo) ?: continue
+            val rules = buildList {
+                for (i in 0 until array.length()) {
+                    val rule = TtsRegexRule.fromJson(array.getJSONObject(i))
+                    if (rule.pattern.isNotEmpty()) add(rule)
+                }
+            }
+            val normalized = JSONArray()
+            rules.forEach { normalized.put(it.toJson()) }
+            if (rules.isNotEmpty()) parsed[novelNo] = normalized.toString()
+        }
+
+        val editor = prefs.edit()
+        prefs.all.keys
+            .filter { it.startsWith(KEY_NOVEL_RULES_PREFIX) }
+            .forEach { editor.remove(it) }
+        parsed.forEach { (novelNo, raw) ->
+            editor.putString(KEY_NOVEL_RULES_PREFIX + novelNo, raw)
+        }
+        editor.apply()
+    }
+
 
     /**
      * Migration to the verified rule set.

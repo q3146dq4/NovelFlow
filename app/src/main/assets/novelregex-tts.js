@@ -433,7 +433,11 @@
     const numberMatch = episodeTag.match(/\d+/);
     const episodeNumber = numberMatch ? numberMatch[0] : "0";
 
+    const novelNo = document.getElementById("novel_no")?.value || "";
+
     return JSON.stringify({
+      novelNo,
+      episodeNumber: Number(episodeNumber) || 0,
       episode: `EP.${episodeNumber}`,
       title,
       lineCount: state.lines.length,

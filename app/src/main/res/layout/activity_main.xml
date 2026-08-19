@@ -101,32 +101,26 @@
         <!-- ========================================================
              TTS 하단 플레이어
              ======================================================== -->
-        <androidx.constraintlayout.widget.ConstraintLayout
+                <androidx.constraintlayout.widget.ConstraintLayout
             android:id="@+id/tts_player_bottom"
             android:layout_width="match_parent"
-            android:layout_height="120dp"
+            android:layout_height="176dp"
             android:background="#000000"
             android:clickable="true"
             android:focusable="true"
             app:layout_constraintBottom_toBottomOf="parent">
 
-            <!-- ====================================================
-                 시커바
-                 ==================================================== -->
             <FrameLayout
                 android:id="@+id/tts_progress_container"
                 android:layout_width="0dp"
-                android:layout_height="32dp"
+                android:layout_height="30dp"
                 android:layout_marginStart="20dp"
-                android:layout_marginTop="12dp"
+                android:layout_marginTop="8dp"
                 android:layout_marginEnd="16dp"
                 app:layout_constraintEnd_toStartOf="@+id/tts_counter_text"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toTopOf="parent" />
 
-            <!-- ====================================================
-                 현재 위치 표시
-                 ==================================================== -->
             <TextView
                 android:id="@+id/tts_counter_text"
                 android:layout_width="wrap_content"
@@ -140,62 +134,122 @@
                 app:layout_constraintTop_toTopOf="@+id/tts_progress_container"
                 tools:text="14 / 74" />
 
-            <!-- ====================================================
-                 정주행 / 한 화
-                 ==================================================== -->
+            <LinearLayout
+                android:id="@+id/tts_auto_stop_row"
+                android:layout_width="0dp"
+                android:layout_height="38dp"
+                android:layout_marginStart="12dp"
+                android:layout_marginEnd="12dp"
+                android:gravity="center"
+                android:orientation="horizontal"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@+id/tts_progress_container">
+
+                <TextView
+                    android:id="@+id/tts_sleep_text"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="?attr/selectableItemBackground"
+                    android:gravity="center"
+                    android:text="취침"
+                    android:textColor="#A8A8A8"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/tts_stop_episode_text"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="?attr/selectableItemBackground"
+                    android:gravity="center"
+                    android:text="N화까지"
+                    android:textColor="#A8A8A8"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/tts_regex_text"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="?attr/selectableItemBackground"
+                    android:gravity="center"
+                    android:text="정규식"
+                    android:textColor="#A8A8A8"
+                    android:textSize="13sp" />
+            </LinearLayout>
+
             <TextView
                 android:id="@+id/tts_mode_text"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="16dp"
-                android:layout_marginBottom="16dp"
+                android:layout_width="76dp"
+                android:layout_height="56dp"
+                android:layout_marginStart="8dp"
                 android:background="?attr/selectableItemBackground"
-                android:clickable="true"
-                android:focusable="true"
-                android:padding="8dp"
+                android:gravity="center"
                 android:text="정주행"
                 android:textColor="#999999"
                 android:textSize="14sp"
                 app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintStart_toStartOf="parent" />
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@+id/tts_auto_stop_row" />
 
-            <!-- ====================================================
-                 배속
-                 ==================================================== -->
-            <TextView
-                android:id="@+id/tts_speed_text"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginEnd="16dp"
-                android:layout_marginBottom="16dp"
-                android:background="?attr/selectableItemBackground"
-                android:clickable="true"
-                android:focusable="true"
-                android:padding="8dp"
-                android:text="1.0x ⌄"
-                android:textColor="#999999"
-                android:textSize="14sp"
-                app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintEnd_toEndOf="parent" />
-
-            <!-- ====================================================
-                 가운데 재생 컨트롤
-                 ==================================================== -->
             <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:id="@+id/tts_speed_group"
+                android:layout_width="96dp"
+                android:layout_height="56dp"
+                android:layout_marginEnd="4dp"
                 android:gravity="center"
                 android:orientation="horizontal"
                 app:layout_constraintBottom_toBottomOf="parent"
-                app:layout_constraintEnd_toStartOf="@+id/tts_speed_text"
-                app:layout_constraintStart_toEndOf="@+id/tts_mode_text"
-                app:layout_constraintTop_toBottomOf="@+id/tts_progress_container">
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toBottomOf="@+id/tts_auto_stop_row">
 
-                <!-- 이전 문장 -->
+                <TextView
+                    android:id="@+id/tts_speed_minus"
+                    android:layout_width="26dp"
+                    android:layout_height="match_parent"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:gravity="center"
+                    android:text="−"
+                    android:textColor="#FFFFFF"
+                    android:textSize="22sp" />
+
+                <TextView
+                    android:id="@+id/tts_speed_text"
+                    android:layout_width="44dp"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:text="1.0x"
+                    android:textColor="#AAAAAA"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:id="@+id/tts_speed_plus"
+                    android:layout_width="26dp"
+                    android:layout_height="match_parent"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:gravity="center"
+                    android:text="+"
+                    android:textColor="#FFFFFF"
+                    android:textSize="22sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/tts_transport_controls"
+                android:layout_width="172dp"
+                android:layout_height="72dp"
+                android:gravity="center"
+                android:orientation="horizontal"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@+id/tts_auto_stop_row">
+
                 <TextView
                     android:id="@+id/tts_previous_button"
-                    android:layout_width="48dp"
-                    android:layout_height="48dp"
+                    android:layout_width="52dp"
+                    android:layout_height="52dp"
                     android:background="?attr/selectableItemBackgroundBorderless"
                     android:clickable="true"
                     android:focusable="true"
@@ -204,11 +258,10 @@
                     android:textColor="#FFFFFF"
                     android:textSize="20sp" />
 
-                <!-- 재생 / 일시정지 -->
                 <TextView
                     android:id="@+id/tts_play_pause_button"
-                    android:layout_width="64dp"
-                    android:layout_height="64dp"
+                    android:layout_width="68dp"
+                    android:layout_height="68dp"
                     android:background="?attr/selectableItemBackgroundBorderless"
                     android:clickable="true"
                     android:focusable="true"
@@ -217,11 +270,10 @@
                     android:textColor="#FFFFFF"
                     android:textSize="32sp" />
 
-                <!-- 다음 문장 -->
                 <TextView
                     android:id="@+id/tts_next_button"
-                    android:layout_width="48dp"
-                    android:layout_height="48dp"
+                    android:layout_width="52dp"
+                    android:layout_height="52dp"
                     android:background="?attr/selectableItemBackgroundBorderless"
                     android:clickable="true"
                     android:focusable="true"
@@ -229,7 +281,6 @@
                     android:text="⏭"
                     android:textColor="#FFFFFF"
                     android:textSize="20sp" />
-
             </LinearLayout>
 
         </androidx.constraintlayout.widget.ConstraintLayout>

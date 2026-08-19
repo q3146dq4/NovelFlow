@@ -23,12 +23,24 @@ import com.NovelRegEx.app.R
 import com.NovelRegEx.app.tts.TtsRegexRule
 import com.NovelRegEx.app.tts.TtsRegexEngine
 import com.NovelRegEx.app.tts.TtsRegexStore
+import org.json.JSONArray
 import java.util.Locale
 import java.util.UUID
 import java.util.regex.Pattern
 import kotlin.math.roundToInt
 
 class TtsRegexSettingsActivity : AppCompatActivity() {
+    companion object {
+        const val EXTRA_SCOPE = "tts_regex_scope"
+        const val EXTRA_NOVEL_NO = "tts_regex_novel_no"
+        const val SCOPE_GLOBAL = "global"
+        const val SCOPE_NOVEL = "novel"
+    }
+
+    private var novelNo: String? = null
+    private var scope: String = SCOPE_GLOBAL
+    private val isNovelScope: Boolean
+        get() = scope == SCOPE_NOVEL
 
     private lateinit var rootView: View
     private lateinit var rulesContainer: LinearLayout
@@ -72,7 +84,25 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
         bindViews()
         setupInsets()
 
-        rules = TtsRegexStore.load(this)
+        scope = intent.getStringExtra(EXTRA_SCOPE).takeIf { it == SCOPE_NOVEL } ?: SCOPE_GLOBAL
+        novelNo =
+            intent.getStringExtra(EXTRA_NOVEL_NO)
+                ?.trim()
+                ?.takeIf { it.matches(Regex("[0-9]+")) }
+
+        if (isNovelScope && novelNo == null) {
+            Toast.makeText(this, "현재 작품 번호를 확인할 수 없습니다.", Toast.LENGTH_LONG).show()
+            finish()
+            return
+        }
+
+        findViewById<TextView>(R.id.tts_regex_title).text =
+            if (isNovelScope) "현재 작품 TTS 정규식" else "전역 TTS 정규식"
+
+        findViewById<Button>(R.id.button_reset).text =
+            if (isNovelScope) "전체 삭제" else "기본값"
+
+        rules = loadScopeRules()
         renderRules()
 
         findViewById<Button>(R.id.button_add_rule).setOnClickListener {
@@ -95,7 +125,10 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
         }
 
         findViewById<Button>(R.id.button_export).setOnClickListener {
-            exportLauncher.launch("NovelRegEx-tts-regex.json")
+            exportLauncher.launch(
+                if (isNovelScope) "NovelRegEx-tts-regex-novel-${novelNo}.json"
+                else "NovelRegEx-tts-regex-global.json"
+            )
         }
 
         testButton.setOnClickListener {
@@ -179,7 +212,9 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
     private fun renderRules() {
         rulesContainer.removeAllViews()
         countText.text = "총 ${rules.size}개 규칙"
-        rulesContainer.addView(createKoreanNumberToggleCard())
+        if (!isNovelScope) {
+            rulesContainer.addView(createKoreanNumberToggleCard())
+        }
 
         if (rules.isEmpty()) {
             rulesContainer.addView(
@@ -373,8 +408,19 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
         renderRules()
     }
 
+    private fun loadScopeRules(): MutableList<TtsRegexRule> =
+        if (isNovelScope) {
+            TtsRegexStore.loadNovel(this, novelNo!!)
+        } else {
+            TtsRegexStore.load(this)
+        }
+
     private fun saveRules() {
-        TtsRegexStore.save(this, rules)
+        if (isNovelScope) {
+            TtsRegexStore.saveNovel(this, novelNo!!, rules)
+        } else {
+            TtsRegexStore.save(this, rules)
+        }
     }
 
     // ============================================================
@@ -576,9 +622,23 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
     }
 
     private fun confirmReset() {
+        if (isNovelScope) {
+            AlertDialog.Builder(this)
+                .setTitle("작품별 규칙 전체 삭제")
+                .setMessage("현재 작품에만 적용되는 TTS 정규식을 모두 삭제할까요?")
+                .setNegativeButton("취소", null)
+                .setPositiveButton("삭제") { _, _ ->
+                    rules.clear()
+                    saveRules()
+                    renderRules()
+                }
+                .show()
+            return
+        }
+
         AlertDialog.Builder(this)
             .setTitle("기본 규칙으로 복원")
-            .setMessage("현재 사용자 규칙을 모두 기본 규칙으로 교체할까요?")
+            .setMessage("현재 전역 규칙을 모두 기본 규칙으로 교체할까요?")
             .setNegativeButton("취소", null)
             .setPositiveButton("복원") { _, _ ->
                 TtsRegexStore.reset(this)
@@ -617,7 +677,15 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
     private fun prepareSpeechText(original: String): String =
         TtsRegexEngine.apply(
             original = original,
-            rules = rules,
+            rules =
+                if (isNovelScope) {
+                    buildList {
+                        addAll(TtsRegexStore.load(this@TtsRegexSettingsActivity))
+                        addAll(rules)
+                    }
+                } else {
+                    rules
+                },
             koreanNumberEnabled = TtsRegexStore.isKoreanNumberEnabled(this),
         )
 
@@ -690,7 +758,10 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
 
     private fun exportTo(uri: Uri) {
         runCatching {
-            val json = TtsRegexStore.exportJson(this)
+            val json =
+                JSONArray().apply {
+                    rules.forEach { put(it.toJson()) }
+                }.toString(2)
             contentResolver.openOutputStream(uri)?.use {
                 it.write(json.toByteArray(Charsets.UTF_8))
             } ?: error("파일을 저장할 수 없습니다.")
@@ -716,13 +787,22 @@ class TtsRegexSettingsActivity : AppCompatActivity() {
             } ?: error("파일을 읽을 수 없습니다.")
         }.fold(
             onSuccess = { json ->
-                TtsRegexStore.importJson(this, json).fold(
-                    onSuccess = { count ->
-                        rules = TtsRegexStore.load(this)
+                runCatching {
+                    val array = JSONArray(json)
+                    buildList {
+                        for (index in 0 until array.length()) {
+                            val rule = TtsRegexRule.fromJson(array.getJSONObject(index))
+                            if (rule.pattern.isNotEmpty()) add(rule)
+                        }
+                    }.toMutableList()
+                }.fold(
+                    onSuccess = { imported ->
+                        rules = imported
+                        saveRules()
                         renderRules()
                         Toast.makeText(
                             this,
-                            "${count}개 규칙을 불러왔습니다.",
+                            "${imported.size}개 규칙을 불러왔습니다.",
                             Toast.LENGTH_SHORT
                         ).show()
                     },

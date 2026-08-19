@@ -6,7 +6,6 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import androidx.core.net.toUri
 import java.io.ByteArrayInputStream
-import java.util.concurrent.ConcurrentHashMap
 
 class FilterRuntime private constructor(
   private val app: Application,
@@ -22,7 +21,7 @@ class FilterRuntime private constructor(
   }
 
   private val repository = FilterRepository(app)
-  private val cosmeticCache = ConcurrentHashMap<String, FilterCosmeticPayload>()
+  private val cosmeticCache = SynchronizedLruCache<String, FilterCosmeticPayload>(128)
   private val compileLock = Any()
 
   @Volatile
@@ -78,7 +77,7 @@ class FilterRuntime private constructor(
 
     ensureEngine()
     val engine = compiledFilters.cosmeticEngine
-    cosmeticCache[normalizedUrl] = engine.createPayload(normalizedUrl)
+    cosmeticCache.put(normalizedUrl, engine.createPayload(normalizedUrl))
   }
 
   fun maybeBlock(request: WebResourceRequest): WebResourceResponse? {

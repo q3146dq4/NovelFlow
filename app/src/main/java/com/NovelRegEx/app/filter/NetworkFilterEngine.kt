@@ -1,7 +1,5 @@
 package com.NovelRegEx.app.filter
 
-import java.util.concurrent.ConcurrentHashMap
-
 private const val TYPE_OTHER = 4096
 
 class NetworkFilterEngine private constructor(
@@ -9,11 +7,11 @@ class NetworkFilterEngine private constructor(
   private val tokenIndexedRules: Map<String, List<CompiledNetworkRule>>,
   private val fallbackRules: List<CompiledNetworkRule>,
 ) {
-  private val resultCache = ConcurrentHashMap<NetworkRequestKey, Boolean>()
+  private val resultCache = SynchronizedLruCache<NetworkRequestKey, Boolean>(8_192)
 
   fun shouldBlock(request: FilterRequest): Boolean {
     val key = NetworkRequestKey(request.url, request.sourceUrl, request.requestType)
-    return resultCache.computeIfAbsent(key) { evaluate(request) }
+    return resultCache.getOrPut(key) { evaluate(request) }
   }
 
   private fun evaluate(request: FilterRequest): Boolean {

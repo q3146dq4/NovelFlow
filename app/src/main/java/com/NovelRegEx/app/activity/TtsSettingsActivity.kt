@@ -25,6 +25,9 @@ import com.NovelRegEx.app.tts.TtsPreferences
 import com.NovelRegEx.app.tts.TtsRegexStore
 
 class TtsSettingsActivity : AppCompatActivity() {
+  companion object {
+    const val EXTRA_NOVEL_NO = "novel_no"
+  }
   private var fragmentContainerId: Int = View.NO_ID
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -106,7 +109,18 @@ class TtsSettingsActivity : AppCompatActivity() {
     if (savedInstanceState == null) {
       supportFragmentManager
         .beginTransaction()
-        .replace(fragmentContainerId, TtsSettingsFragment())
+        .replace(
+          fragmentContainerId,
+          TtsSettingsFragment().apply {
+            arguments =
+              Bundle().apply {
+                intent
+                  .getStringExtra(EXTRA_NOVEL_NO)
+                  ?.takeIf { it.matches(Regex("[0-9]+")) }
+                  ?.let { putString(EXTRA_NOVEL_NO, it) }
+              }
+          },
+        )
         .commit()
     }
   }
@@ -119,11 +133,17 @@ class TtsSettingsActivity : AppCompatActivity() {
 
     private lateinit var enginePref: ListPreference
     private lateinit var koreanNumberPref: SwitchPreferenceCompat
-    private lateinit var regexPref: Preference
+    private lateinit var globalRegexPref: Preference
+    private lateinit var novelRegexPref: Preference
+    private var novelNo: String? = null
 
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
       val context = requireContext()
       val screen = preferenceManager.createPreferenceScreen(context)
+      novelNo =
+        arguments
+          ?.getString(TtsSettingsActivity.EXTRA_NOVEL_NO)
+          ?.takeIf { it.matches(Regex("[0-9]+")) }
       preferenceScreen = screen
 
       val engineCategory = PreferenceCategory(context).apply { title = "TTS 엔진" }
@@ -209,15 +229,36 @@ class TtsSettingsActivity : AppCompatActivity() {
         }
       category.addPreference(koreanNumberPref)
 
-      regexPref =
+      globalRegexPref =
         Preference(context).apply {
-          title = "TTS 정규식"
+          title = "전역 TTS 정규식"
           setOnPreferenceClickListener {
-            startActivity(Intent(context, TtsRegexSettingsActivity::class.java))
+            startActivity(
+              Intent(context, TtsRegexSettingsActivity::class.java).apply {
+                putExtra(TtsRegexSettingsActivity.EXTRA_SCOPE, TtsRegexSettingsActivity.SCOPE_GLOBAL)
+              },
+            )
             true
           }
         }
-      category.addPreference(regexPref)
+      category.addPreference(globalRegexPref)
+
+      novelRegexPref =
+        Preference(context).apply {
+          title = "현재 작품 TTS 정규식"
+          isEnabled = novelNo != null
+          setOnPreferenceClickListener {
+            val id = novelNo ?: return@setOnPreferenceClickListener true
+            startActivity(
+              Intent(context, TtsRegexSettingsActivity::class.java).apply {
+                putExtra(TtsRegexSettingsActivity.EXTRA_SCOPE, TtsRegexSettingsActivity.SCOPE_NOVEL)
+                putExtra(TtsRegexSettingsActivity.EXTRA_NOVEL_NO, id)
+              },
+            )
+            true
+          }
+        }
+      category.addPreference(novelRegexPref)
       refreshDynamicSummaries()
     }
 
@@ -228,10 +269,17 @@ class TtsSettingsActivity : AppCompatActivity() {
     }
 
     private fun refreshDynamicSummaries() {
-      if (!::koreanNumberPref.isInitialized || !::regexPref.isInitialized) return
+      if (
+        !::koreanNumberPref.isInitialized ||
+        !::globalRegexPref.isInitialized ||
+        !::novelRegexPref.isInitialized
+      ) return
       val context = requireContext()
       koreanNumberPref.isChecked = TtsRegexStore.isKoreanNumberEnabled(context)
-      regexPref.summary = "등록된 규칙 ${TtsRegexStore.load(context).size}개"
+      globalRegexPref.summary = "등록된 규칙 ${TtsRegexStore.load(context).size}개"
+      novelRegexPref.summary =
+        novelNo?.let { "등록된 규칙 ${TtsRegexStore.loadNovel(context, it).size}개" }
+          ?: "뷰어에서 작품을 연 상태에서 사용할 수 있습니다."
     }
 
     private fun updateEngineEntries(context: Context, preference: ListPreference) {

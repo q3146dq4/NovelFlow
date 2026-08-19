@@ -393,7 +393,7 @@ class ViewerSettingsBridge(
   @JavascriptInterface
   fun openTtsRegexSettings() {
     activity.runOnUiThread {
-      activity.startActivity(Intent(activity, TtsRegexSettingsActivity::class.java))
+      activity.openTtsRegexScopeDialog()
     }
   }
 
