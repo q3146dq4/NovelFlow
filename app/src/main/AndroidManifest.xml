@@ -80,6 +80,12 @@
             android:label="사용자 규칙"
             android:parentActivityName=".activity.MainActivity" />
 
+        <activity
+            android:name=".activity.TtsSettingsActivity"
+            android:exported="false"
+            android:label="TTS 설정"
+            android:parentActivityName=".activity.MainActivity" />
+
         <!-- TTS 정규식 설정 화면 -->
         <activity
             android:name=".activity.TtsRegexSettingsActivity"

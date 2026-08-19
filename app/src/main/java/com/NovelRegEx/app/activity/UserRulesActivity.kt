@@ -6,11 +6,10 @@ import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
 import android.view.Gravity
-import android.view.Menu
-import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
+import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -20,6 +19,9 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import com.NovelRegEx.app.filter.FilterPreferences
 import com.NovelRegEx.app.filter.FilterRuntime
@@ -28,22 +30,19 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class UserRulesActivity : AppCompatActivity() {
-  companion object {
-    private const val MENU_ADD = 1
-    private const val MENU_EDIT_ALL = 2
-  }
-
   private lateinit var listView: ListView
-  private lateinit var emptyView: TextView
+  private lateinit var emptyPanel: LinearLayout
   private lateinit var adapter: RulesAdapter
   private var rules: List<String> = emptyList()
   private var disabledRules: Set<String> = emptySet()
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
-    title = "사용자 규칙"
-    supportActionBar?.setDisplayHomeAsUpEnabled(true)
-    setContentView(createContentView())
+    WindowCompat.setDecorFitsSystemWindows(window, false)
+    supportActionBar?.hide()
+    val content = createContentView()
+    setContentView(content)
+    ViewCompat.requestApplyInsets(content)
     adapter = RulesAdapter()
     listView.adapter = adapter
   }
@@ -53,48 +52,108 @@ class UserRulesActivity : AppCompatActivity() {
     reloadRules()
   }
 
-  override fun onSupportNavigateUp(): Boolean {
-    finish()
-    return true
-  }
-
-  override fun onCreateOptionsMenu(menu: Menu): Boolean {
-    menu.add(Menu.NONE, MENU_ADD, 0, "추가").setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-    menu.add(Menu.NONE, MENU_EDIT_ALL, 1, "전체 편집").setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
-    return true
-  }
-
-  override fun onOptionsItemSelected(item: MenuItem): Boolean =
-    when (item.itemId) {
-      MENU_ADD -> {
-        showSingleRuleEditor(index = null)
-        true
-      }
-
-      MENU_EDIT_ALL -> {
-        showAllRulesEditor()
-        true
-      }
-
-      else -> super.onOptionsItemSelected(item)
-    }
-
   private fun createContentView(): View {
     val density = resources.displayMetrics.density
     val root =
       LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(0, (6 * density).toInt(), 0, 0)
       }
 
-    root.addView(
+    val header =
+      LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        minimumHeight = (56 * density).toInt()
+      }
+
+    header.addView(
       TextView(this).apply {
-        text = "규칙을 눌러 편집하고, 길게 눌러 삭제할 수 있습니다."
+        text = "←"
+        textSize = 25f
+        gravity = Gravity.CENTER
+        contentDescription = "뒤로"
+        isClickable = true
+        isFocusable = true
+        setOnClickListener { finish() }
+      },
+      LinearLayout.LayoutParams((52 * density).toInt(), (56 * density).toInt()),
+    )
+
+    header.addView(
+      TextView(this).apply {
+        text = "사용자 규칙"
+        textSize = 20f
+        setTypeface(typeface, Typeface.BOLD)
+        gravity = Gravity.CENTER_VERTICAL
+      },
+      LinearLayout.LayoutParams(0, (56 * density).toInt(), 1f),
+    )
+
+    header.addView(
+      TextView(this).apply {
+        text = "+ 추가"
+        textSize = 15f
+        gravity = Gravity.CENTER
+        setPadding((10 * density).toInt(), 0, (10 * density).toInt(), 0)
+        isClickable = true
+        isFocusable = true
+        setOnClickListener { showSingleRuleEditor(index = null) }
+      },
+      LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.WRAP_CONTENT,
+        (56 * density).toInt(),
+      ),
+    )
+
+    header.addView(
+      TextView(this).apply {
+        text = "전체 편집"
+        textSize = 15f
+        gravity = Gravity.CENTER
+        setPadding((10 * density).toInt(), 0, (16 * density).toInt(), 0)
+        isClickable = true
+        isFocusable = true
+        setOnClickListener { showAllRulesEditor() }
+      },
+      LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.WRAP_CONTENT,
+        (56 * density).toInt(),
+      ),
+    )
+
+    root.addView(
+      header,
+      LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT,
+        LinearLayout.LayoutParams.WRAP_CONTENT,
+      ),
+    )
+    root.addView(
+      View(this).apply {
+        alpha = 0.12f
+        setBackgroundColor(android.graphics.Color.GRAY)
+      },
+      LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1),
+    )
+
+    val guide =
+      TextView(this).apply {
+        text = "규칙을 누르면 편집, 스위치로 개별 ON/OFF, 길게 누르면 삭제할 수 있습니다."
         textSize = 13f
         alpha = 0.7f
-        setPadding((16 * density).toInt(), (8 * density).toInt(), (16 * density).toInt(), (10 * density).toInt())
-      },
-      LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT),
+        setPadding(
+          (16 * density).toInt(),
+          (12 * density).toInt(),
+          (16 * density).toInt(),
+          (12 * density).toInt(),
+        )
+      }
+    root.addView(
+      guide,
+      LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT,
+        LinearLayout.LayoutParams.WRAP_CONTENT,
+      ),
     )
 
     val listFrame = FrameLayout(this)
@@ -104,27 +163,70 @@ class UserRulesActivity : AppCompatActivity() {
         clipToPadding = false
         setPadding(0, 0, 0, (12 * density).toInt())
       }
-    emptyView =
-      TextView(this).apply {
-        text = "등록된 사용자 규칙이 없습니다."
+
+    emptyPanel =
+      LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER
-        textSize = 15f
-        alpha = 0.7f
         visibility = View.GONE
+
+        addView(
+          TextView(this@UserRulesActivity).apply {
+            text = "등록된 사용자 규칙이 없습니다."
+            gravity = Gravity.CENTER
+            textSize = 16f
+            alpha = 0.7f
+          },
+          LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+          ),
+        )
+
+        addView(
+          Button(this@UserRulesActivity).apply {
+            text = "+ 규칙 추가"
+            setOnClickListener { showSingleRuleEditor(index = null) }
+          },
+          LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+          ).apply {
+            topMargin = (16 * density).toInt()
+          },
+        )
       }
 
     listFrame.addView(
       listView,
-      FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT),
+      FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT,
+        FrameLayout.LayoutParams.MATCH_PARENT,
+      ),
     )
     listFrame.addView(
-      emptyView,
-      FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT),
+      emptyPanel,
+      FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT,
+        FrameLayout.LayoutParams.MATCH_PARENT,
+      ),
     )
     root.addView(
       listFrame,
-      LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f),
+      LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT,
+        0,
+        1f,
+      ),
     )
+
+    ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
+      val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+      header.setPadding(bars.left, bars.top, bars.right, 0)
+      header.minimumHeight = (56 * density).toInt() + bars.top
+      listFrame.setPadding(bars.left, 0, bars.right, bars.bottom)
+      insets
+    }
     return root
   }
 
@@ -132,7 +234,8 @@ class UserRulesActivity : AppCompatActivity() {
     rules = FilterPreferences.getUserRuleLines(this)
     disabledRules = FilterPreferences.getDisabledUserRuleLines(this).toSet()
     adapter.notifyDataSetChanged()
-    emptyView.visibility = if (rules.isEmpty()) View.VISIBLE else View.GONE
+    emptyPanel.visibility = if (rules.isEmpty()) View.VISIBLE else View.GONE
+    listView.visibility = if (rules.isEmpty()) View.GONE else View.VISIBLE
   }
 
   private fun setRuleEnabled(
@@ -149,9 +252,13 @@ class UserRulesActivity : AppCompatActivity() {
     val editText =
       EditText(this).apply {
         setText(existing.orEmpty())
+        hint = "예: novelpia.com##.main-bnr-img\n또는 차단할 이미지/요청 URL"
         gravity = Gravity.TOP or Gravity.START
-        minLines = 3
-        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        minLines = 4
+        inputType =
+          InputType.TYPE_CLASS_TEXT or
+            InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+            InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         typeface = Typeface.MONOSPACE
         setSelection(text.length)
       }
@@ -159,21 +266,24 @@ class UserRulesActivity : AppCompatActivity() {
     val dialog =
       AlertDialog
         .Builder(this)
-        .setTitle(if (index == null) "규칙 추가" else "규칙 편집")
+        .setTitle(if (index == null) "규칙 추가" else "${index + 1}번 규칙 편집")
         .setView(wrapWithDialogPadding(editText))
         .setPositiveButton("저장", null)
         .setNegativeButton("취소", null)
         .apply {
-          if (index != null) {
-            setNeutralButton("삭제", null)
-          }
-        }.create()
+          if (index != null) setNeutralButton("삭제", null)
+        }
+        .create()
 
     dialog.setOnShowListener {
       dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
         val newRule = editText.text.toString().trim()
         if (newRule.isEmpty()) {
           editText.error = "규칙을 입력해 주세요."
+          return@setOnClickListener
+        }
+        if ('\n' in newRule || '\r' in newRule) {
+          editText.error = "개별 추가에서는 규칙 한 줄만 입력해 주세요. 여러 줄은 '전체 편집'을 사용하세요."
           return@setOnClickListener
         }
 
@@ -229,9 +339,13 @@ class UserRulesActivity : AppCompatActivity() {
       .setPositiveButton("삭제") { _, _ ->
         val updated = rules.toMutableList().apply { removeAt(index) }
         FilterPreferences.setUserRuleLines(this, updated)
+        val disabled = FilterPreferences.getDisabledUserRuleLines(this).toMutableSet()
+        disabled.remove(rule)
+        FilterPreferences.setDisabledUserRuleLines(this, disabled.toList())
         reloadRules()
         refreshFilterEngine()
-      }.setNegativeButton("취소", null)
+      }
+      .setNegativeButton("취소", null)
       .show()
   }
 
@@ -242,17 +356,31 @@ class UserRulesActivity : AppCompatActivity() {
         textSize = 14f
         typeface = Typeface.MONOSPACE
         gravity = Gravity.TOP or Gravity.END
-        setPadding((8 * density).toInt(), (10 * density).toInt(), (10 * density).toInt(), (10 * density).toInt())
+        setPadding(
+          (6 * density).toInt(),
+          (12 * density).toInt(),
+          (8 * density).toInt(),
+          (12 * density).toInt(),
+        )
         alpha = 0.55f
       }
     val editor =
       EditText(this).apply {
         setText(rules.joinToString("\n"))
+        hint = "규칙을 한 줄에 하나씩 입력하세요."
         textSize = 14f
         typeface = Typeface.MONOSPACE
         gravity = Gravity.TOP or Gravity.START
-        setPadding((8 * density).toInt(), (10 * density).toInt(), (8 * density).toInt(), (10 * density).toInt())
-        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        setPadding(
+          (8 * density).toInt(),
+          (10 * density).toInt(),
+          (8 * density).toInt(),
+          (10 * density).toInt(),
+        )
+        inputType =
+          InputType.TYPE_CLASS_TEXT or
+            InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+            InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         setHorizontallyScrolling(true)
         isVerticalScrollBarEnabled = true
       }
@@ -276,11 +404,18 @@ class UserRulesActivity : AppCompatActivity() {
         orientation = LinearLayout.HORIZONTAL
         addView(
           numbers,
-          LinearLayout.LayoutParams((46 * density).toInt(), (420 * density).toInt()),
+          LinearLayout.LayoutParams(
+            (42 * density).toInt(),
+            (430 * density).toInt(),
+          ),
         )
         addView(
           editor,
-          LinearLayout.LayoutParams(0, (420 * density).toInt(), 1f),
+          LinearLayout.LayoutParams(
+            0,
+            (430 * density).toInt(),
+            1f,
+          ),
         )
       }
 
@@ -308,8 +443,6 @@ class UserRulesActivity : AppCompatActivity() {
 
         FilterPreferences.setUserRuleLines(this, newRules)
 
-        // Exact matches keep their state. If an OFF rule is edited in place,
-        // preserve the OFF state for the rule occupying the same line.
         val transferredDisabled = linkedSetOf<String>()
         newRules.forEachIndexed { newIndex, newRule ->
           if (newRule in oldDisabled) {
@@ -332,10 +465,18 @@ class UserRulesActivity : AppCompatActivity() {
   private fun wrapWithDialogPadding(child: View): View {
     val density = resources.displayMetrics.density
     return LinearLayout(this).apply {
-      setPadding((20 * density).toInt(), (8 * density).toInt(), (20 * density).toInt(), 0)
+      setPadding(
+        (20 * density).toInt(),
+        (8 * density).toInt(),
+        (20 * density).toInt(),
+        0,
+      )
       addView(
         child,
-        LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT),
+        LinearLayout.LayoutParams(
+          LinearLayout.LayoutParams.MATCH_PARENT,
+          LinearLayout.LayoutParams.WRAP_CONTENT,
+        ),
       )
     }
   }
@@ -385,8 +526,11 @@ class UserRulesActivity : AppCompatActivity() {
 
       switch.setOnCheckedChangeListener(null)
       switch.isChecked = enabled
-      switch.contentDescription = "${position + 1}번 규칙 ${if (enabled) "사용" else "사용 안 함"}"
-      switch.setOnCheckedChangeListener { _, checked -> setRuleEnabled(rule, checked) }
+      switch.contentDescription =
+        "${position + 1}번 규칙 ${if (enabled) "사용" else "사용 안 함"}"
+      switch.setOnCheckedChangeListener { _, checked ->
+        setRuleEnabled(rule, checked)
+      }
 
       row.setOnClickListener { showSingleRuleEditor(position) }
       row.setOnLongClickListener {
@@ -402,7 +546,12 @@ class UserRulesActivity : AppCompatActivity() {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         minimumHeight = (70 * density).toInt()
-        setPadding((8 * density).toInt(), (7 * density).toInt(), (10 * density).toInt(), (7 * density).toInt())
+        setPadding(
+          (8 * density).toInt(),
+          (7 * density).toInt(),
+          (10 * density).toInt(),
+          (7 * density).toInt(),
+        )
         isClickable = true
         isFocusable = true
 
@@ -412,7 +561,10 @@ class UserRulesActivity : AppCompatActivity() {
             textSize = 14f
             alpha = 0.65f
           },
-          LinearLayout.LayoutParams((42 * density).toInt(), LinearLayout.LayoutParams.MATCH_PARENT),
+          LinearLayout.LayoutParams(
+            (42 * density).toInt(),
+            LinearLayout.LayoutParams.MATCH_PARENT,
+          ),
         )
 
         addView(
@@ -426,22 +578,35 @@ class UserRulesActivity : AppCompatActivity() {
                 maxLines = 2
                 ellipsize = android.text.TextUtils.TruncateAt.END
               },
-              LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT),
+              LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+              ),
             )
             addView(
               TextView(parent.context).apply {
                 textSize = 12f
                 setPadding(0, (3 * density).toInt(), 0, 0)
               },
-              LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT),
+              LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+              ),
             )
           },
-          LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
+          LinearLayout.LayoutParams(
+            0,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            1f,
+          ),
         )
 
         addView(
           SwitchCompat(parent.context),
-          LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT),
+          LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+          ),
         )
       }
     }

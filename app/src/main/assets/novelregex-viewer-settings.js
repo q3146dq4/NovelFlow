@@ -2,138 +2,27 @@
   const TAB_ID = "novelregex-viewer-settings-tab";
   const PANEL_ID = "novelregex-viewer-settings-panel";
   const STYLE_ID = "novelregex-viewer-settings-style";
-  const NORMAL_TAB_TEXT = "일반설정";
-  const ADVANCED_TAB_TEXT = "고급설정";
-  const debounceState = { timer: null };
+  const SITE = {
+    themeBox: "theme_box",
+    normalTab: "btn_panel_1",
+    advancedTab: "btn_panel_2",
+    normalPanel: "option_panel_1",
+    advancedPanel: "option_panel_2",
+  };
+
   let current = null;
+  let injectTimer = null;
 
-  function compactText(value) {
-    return String(value || "").replace(/\s+/g, "").trim();
-  }
-
-  function isVisible(element) {
-    if (!element || !element.isConnected) return false;
-    const rect = element.getBoundingClientRect();
-    if (rect.width < 8 || rect.height < 8) return false;
-    const style = getComputedStyle(element);
-    return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || "1") > 0;
-  }
-
-  function elementScore(element) {
-    const tag = element.tagName;
-    let score = 100;
-    if (tag === "BUTTON" || tag === "A") score -= 35;
-    if (tag === "LI") score -= 20;
-    if (element.getAttribute("role") === "tab") score -= 40;
-    if (typeof element.onclick === "function") score -= 15;
-    score += Math.min(30, element.children.length * 3);
-    const rect = element.getBoundingClientRect();
-    score += Math.min(30, (rect.width * rect.height) / 12000);
-    return score;
-  }
-
-  function findTextElement(compactLabel) {
-    const candidates = Array.from(
-      document.querySelectorAll('button,a,[role="tab"],li,div,span,p')
-    ).filter((element) => isVisible(element) && compactText(element.textContent) === compactLabel);
-    candidates.sort((a, b) => elementScore(a) - elementScore(b));
-    return candidates[0] || null;
-  }
-
-  function ancestors(element, limit = 8) {
-    const out = [];
-    let cursor = element;
-    while (cursor && cursor !== document.body && out.length < limit) {
-      out.push(cursor);
-      cursor = cursor.parentElement;
-    }
-    return out;
-  }
-
-  function commonAncestor(a, b) {
-    const bSet = new Set(ancestors(b, 10));
-    return ancestors(a, 10).find((node) => bSet.has(node)) || null;
-  }
-
-  function directChildUnder(ancestor, node) {
-    let cursor = node;
-    while (cursor && cursor.parentElement && cursor.parentElement !== ancestor) {
-      cursor = cursor.parentElement;
-    }
-    return cursor && cursor.parentElement === ancestor ? cursor : null;
-  }
-
-  function findTabStructure() {
-    const normalText = findTextElement(NORMAL_TAB_TEXT);
-    const advancedText = findTextElement(ADVANCED_TAB_TEXT);
-    if (!normalText || !advancedText) return null;
-
-    const common = commonAncestor(normalText, advancedText);
-    if (!common) return null;
-
-    let tabBar = common;
-    let normalTab = directChildUnder(tabBar, normalText) || normalText;
-    let advancedTab = directChildUnder(tabBar, advancedText) || advancedText;
-
-    // If the common ancestor itself is one of the tabs, use its parent.
-    if (normalTab === advancedTab || normalTab === tabBar || advancedTab === tabBar) {
-      tabBar = common.parentElement;
-      if (!tabBar) return null;
-      normalTab = directChildUnder(tabBar, normalText) || normalText;
-      advancedTab = directChildUnder(tabBar, advancedText) || advancedText;
-    }
-    if (!normalTab || !advancedTab || normalTab === advancedTab) return null;
-
-    const tabRect = tabBar.getBoundingClientRect();
-    if (tabRect.width < 180 || tabRect.height > 180) return null;
-    return { normalText, advancedText, tabBar, normalTab, advancedTab };
-  }
-
-  function findSettingsRoot(tabBar) {
-    let cursor = tabBar.parentElement;
-    let best = null;
-    for (let depth = 0; cursor && cursor !== document.body && depth < 7; depth += 1) {
-      const rect = cursor.getBoundingClientRect();
-      const text = compactText(cursor.textContent);
-      if (
-        rect.width >= 260 &&
-        rect.height >= 260 &&
-        text.includes(NORMAL_TAB_TEXT) &&
-        text.includes(ADVANCED_TAB_TEXT)
-      ) {
-        best = cursor;
-        if (text.includes("폰트") || text.includes("일러스트") || text.includes("뷰어방식")) {
-          return cursor;
-        }
-      }
-      cursor = cursor.parentElement;
-    }
-    return best;
-  }
-
-  function removeDuplicateIds(root) {
-    if (!root) return;
-    if (root.removeAttribute) root.removeAttribute("id");
-    root.querySelectorAll?.("[id]").forEach((element) => element.removeAttribute("id"));
-  }
-
-  function replaceAdvancedLabel(clone) {
-    const nodes = [clone, ...clone.querySelectorAll("*")];
-    const target = nodes
-      .filter((element) => compactText(element.textContent) === ADVANCED_TAB_TEXT)
-      .sort((a, b) => a.children.length - b.children.length)[0];
-    if (target) target.textContent = "NovelRegEx";
-    else clone.textContent = "NovelRegEx";
-  }
-
-  function backgroundColorFor(element) {
-    let cursor = element;
-    while (cursor && cursor !== document.documentElement) {
-      const color = getComputedStyle(cursor).backgroundColor;
-      if (color && color !== "rgba(0, 0, 0, 0)" && color !== "transparent") return color;
-      cursor = cursor.parentElement;
-    }
-    return "#fff";
+  function siteNodes() {
+    const themeBox = document.getElementById(SITE.themeBox);
+    const normalTab = document.getElementById(SITE.normalTab);
+    const advancedTab = document.getElementById(SITE.advancedTab);
+    const normalPanel = document.getElementById(SITE.normalPanel);
+    const advancedPanel = document.getElementById(SITE.advancedPanel);
+    if (!themeBox || !normalTab || !advancedTab || !normalPanel || !advancedPanel) return null;
+    const tabRow = normalTab.parentElement;
+    if (!tabRow || advancedTab.parentElement !== tabRow) return null;
+    return { themeBox, normalTab, advancedTab, normalPanel, advancedPanel, tabRow };
   }
 
   function ensureStyle() {
@@ -158,8 +47,11 @@
       }
       #${PANEL_ID} .nr-row {
         width: 100%;
-        min-height: 46px;
-        padding: 8px 4px;
+        height: 52px;
+        min-height: 52px;
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0 4px;
         display: flex;
         align-items: center;
         gap: 12px;
@@ -169,8 +61,13 @@
         color: inherit;
         text-align: left;
         font: inherit;
+        line-height: 1.25;
       }
-      #${PANEL_ID} button.nr-row { cursor: pointer; }
+      #${PANEL_ID} button.nr-row {
+        cursor: pointer;
+        appearance: none;
+        -webkit-appearance: none;
+      }
       #${PANEL_ID} .nr-label { flex: 1 1 auto; min-width: 0; }
       #${PANEL_ID} .nr-value {
         flex: 0 0 auto;
@@ -189,7 +86,11 @@
         outline: 0;
         background: transparent;
         color: inherit;
-        font: inherit;
+        font-family: inherit;
+        font-style: inherit;
+        font-weight: inherit;
+        font-size: var(--nr-select-font-size, 14px) !important;
+        line-height: 1.3;
         text-align: right;
       }
       #${PANEL_ID} .nr-switch {
@@ -221,10 +122,12 @@
       #${PANEL_ID} .nr-switch input:checked + .nr-slider { background: #6b4eff; }
       #${PANEL_ID} .nr-switch input:checked + .nr-slider:before { transform: translateX(18px); }
       #${PANEL_ID} .nr-row.nr-disabled { opacity: .38; pointer-events: none; }
-      #${TAB_ID}[data-nr-active="1"] {
-        font-weight: 700 !important;
-        box-shadow: inset 0 -2px currentColor;
+      #${PANEL_ID} .nr-more-settings-separator {
+        height: 10px;
+        box-sizing: border-box;
+        border-top: 1px solid rgba(127,127,127,.16);
       }
+      #${TAB_ID} { text-align: center; font-size: 13px; width: 33.3333%; }
     `;
     (document.head || document.documentElement).appendChild(style);
   }
@@ -238,7 +141,10 @@
 
   function setQuickSetting(key, value) {
     try {
-      return !!(window._NovelRegExSettings && window._NovelRegExSettings.setQuickSetting(key, String(value)));
+      return !!(
+        window._NovelRegExSettings &&
+        window._NovelRegExSettings.setQuickSetting(key, String(value))
+      );
     } catch (_) {
       return false;
     }
@@ -247,6 +153,7 @@
   function createSelectRow(label, key, value, options, onChanged) {
     const row = document.createElement("div");
     row.className = "nr-row";
+
     const labelNode = document.createElement("div");
     labelNode.className = "nr-label";
     labelNode.textContent = label;
@@ -259,6 +166,7 @@
       if (String(optionValue) === String(value)) option.selected = true;
       select.appendChild(option);
     });
+
     select.addEventListener("change", () => {
       if (!setQuickSetting(key, select.value)) {
         refresh();
@@ -274,6 +182,7 @@
   function createSwitchRow(label, key, checked) {
     const row = document.createElement("label");
     row.className = "nr-row";
+
     const labelNode = document.createElement("div");
     labelNode.className = "nr-label";
     labelNode.textContent = label;
@@ -297,19 +206,58 @@
     return row;
   }
 
+  function createNativeChoiceRow(label, value, key) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "nr-row";
+
+    const labelNode = document.createElement("div");
+    labelNode.className = "nr-label";
+    labelNode.textContent = label;
+
+    const valueNode = document.createElement("div");
+    valueNode.className = "nr-value";
+    valueNode.textContent = value || "";
+
+    const chevron = document.createElement("div");
+    chevron.className = "nr-chevron";
+    chevron.textContent = "›";
+
+    row.append(labelNode, valueNode, chevron);
+    row.addEventListener("click", () => {
+      try {
+        const bridge = window._NovelRegExSettings;
+        if (bridge && typeof bridge.openQuickChoiceDialog === "function") {
+          bridge.openQuickChoiceDialog(key);
+        }
+      } catch (_) {}
+    });
+
+    return row;
+  }
+
+  function optionLabel(options, value, fallback = "") {
+    const found = options.find(([optionValue]) => String(optionValue) === String(value));
+    return found ? String(found[1]) : fallback;
+  }
+
   function createNavigationRow(label, value, actionName) {
     const row = document.createElement("button");
     row.type = "button";
     row.className = "nr-row";
+
     const labelNode = document.createElement("div");
     labelNode.className = "nr-label";
     labelNode.textContent = label;
+
     const valueNode = document.createElement("div");
     valueNode.className = "nr-value";
     valueNode.textContent = value || "";
+
     const chevron = document.createElement("div");
     chevron.className = "nr-chevron";
     chevron.textContent = "›";
+
     row.append(labelNode, valueNode, chevron);
     row.addEventListener("click", () => {
       try {
@@ -322,7 +270,9 @@
 
   function readQuickSettings() {
     try {
-      const raw = window._NovelRegExSettings && window._NovelRegExSettings.getQuickSettings();
+      const raw =
+        window._NovelRegExSettings &&
+        window._NovelRegExSettings.getQuickSettings();
       return raw ? JSON.parse(raw) : null;
     } catch (_) {
       return null;
@@ -340,166 +290,192 @@
       return;
     }
 
+    const selectFontSize = Number(data.selectFontSizeCssPx);
+    if (Number.isFinite(selectFontSize) && selectFontSize >= 8 && selectFontSize <= 40) {
+      panel.style.setProperty("--nr-select-font-size", `${selectFontSize.toFixed(2)}px`);
+    } else {
+      panel.style.setProperty("--nr-select-font-size", "14px");
+    }
+
     panel.appendChild(createSectionTitle("TTS"));
+    const ttsEngineOptions = Array.isArray(data.ttsEngines)
+      ? data.ttsEngines.map((item) => [String(item.value || ""), String(item.label || item.value || "TTS 엔진")])
+      : [["", "시스템 기본 엔진"]];
     panel.appendChild(
-      createSelectRow(
+      createNativeChoiceRow(
+        "TTS 엔진",
+        optionLabel(ttsEngineOptions, data.ttsEnginePackage || "", "시스템 기본 엔진"),
+        "tts_engine_package",
+      ),
+    );
+    panel.appendChild(
+      createNavigationRow(
+        "시스템 TTS 설정",
+        "",
+        "openSystemTtsSettings",
+      ),
+    );
+    const chunkOptions = [["comma", "쉼표"], ["sentence", "마침표"], ["paragraph", "문단"]];
+    panel.appendChild(
+      createNativeChoiceRow(
         "청크 단위",
+        optionLabel(chunkOptions, data.chunkMode, "문단"),
         "tts_chunk_mode",
-        data.chunkMode,
-        [["comma", "쉼표"], ["sentence", "마침표"], ["paragraph", "문단"]],
-      ).row,
+      ),
+    );
+    const preQueueOptions = [["0", "OFF"], ["2", "2 chunks"], ["3", "3 chunks"], ["4", "4 chunks"], ["5", "5 chunks"]];
+    panel.appendChild(
+      createNativeChoiceRow(
+        "Rolling Pre-Queue",
+        optionLabel(preQueueOptions, String(data.rollingPreQueueDepth), "3 chunks"),
+        "tts_rolling_prequeue_depth",
+      ),
     );
     panel.appendChild(
-      createSelectRow(
-        "Rolling Pre-Queue",
-        "tts_rolling_prequeue_depth",
-        String(data.rollingPreQueueDepth),
-        [["0", "OFF"], ["2", "2 chunks"], ["3", "3 chunks"], ["4", "4 chunks"], ["5", "5 chunks"]],
-      ).row,
+      createSwitchRow(
+        "한글 숫자 읽기",
+        "tts_korean_number_enabled",
+        data.koreanNumberEnabled,
+      ),
     );
-    panel.appendChild(createSwitchRow("한글 숫자 읽기", "tts_korean_number_enabled", data.koreanNumberEnabled));
-    panel.appendChild(createNavigationRow("TTS 정규식", `${data.ttsRegexCount || 0}개`, "openTtsRegexSettings"));
+    panel.appendChild(
+      createNavigationRow(
+        "TTS 정규식",
+        `${data.ttsRegexCount || 0}개`,
+        "openTtsRegexSettings",
+      ),
+    );
 
     panel.appendChild(createSectionTitle("일반 설정"));
+    const startPageOptions = [
+      ["https://novelpia.com", "홈"],
+      ["https://novelpia.com/mybook/last_view", "마지막으로 본 작품"],
+      ["https://novelpia.com/mybook", "내서재"],
+    ];
     panel.appendChild(
-      createSelectRow(
+      createNativeChoiceRow(
         "시작 페이지",
+        optionLabel(startPageOptions, data.startPage, "내서재"),
         "start_page",
-        data.startPage,
-        [
-          ["https://novelpia.com", "홈"],
-          ["https://novelpia.com/mybook/last_view", "마지막으로 본 작품"],
-          ["https://novelpia.com/mybook", "내서재"],
-        ],
-      ).row,
+      ),
     );
 
-    const direction = createSelectRow(
-      "볼륨 키 방향",
-      "volume_direction",
-      data.volumeDirection,
-      [["up_prev", "↑ 이전 / ↓ 다음"], ["up_next", "↑ 다음 / ↓ 이전"]],
-    );
-    const behavior = createSelectRow(
-      "볼륨 키 동작",
-      "volume_behavior",
-      data.volumeBehavior,
-      [["move_page", "페이지 이동"], ["disable", "기본 볼륨 조절"]],
-      (value) => {
-        const disabled = value !== "move_page";
-        direction.select.disabled = disabled;
-        direction.row.classList.toggle("nr-disabled", disabled);
-      },
-    );
-    panel.appendChild(behavior.row);
-    direction.select.disabled = data.volumeBehavior !== "move_page";
-    direction.row.classList.toggle("nr-disabled", data.volumeBehavior !== "move_page");
-    panel.appendChild(direction.row);
+    const behaviorOptions = [["move_page", "페이지 이동"], ["disable", "기본 볼륨 조절"]];
+    const directionOptions = [["up_prev", "↑ 이전 / ↓ 다음"], ["up_next", "↑ 다음 / ↓ 이전"]];
+
+    const behaviorRow =
+      createNativeChoiceRow(
+        "볼륨 키 동작",
+        optionLabel(behaviorOptions, data.volumeBehavior, "페이지 이동"),
+        "volume_behavior",
+      );
+    panel.appendChild(behaviorRow);
+
+    const directionRow =
+      createNativeChoiceRow(
+        "볼륨 키 방향",
+        optionLabel(directionOptions, data.volumeDirection, "↑ 이전 / ↓ 다음"),
+        "volume_direction",
+      );
+    const directionDisabled = data.volumeBehavior !== "move_page";
+    directionRow.disabled = directionDisabled;
+    directionRow.classList.toggle("nr-disabled", directionDisabled);
+    panel.appendChild(directionRow);
 
     panel.appendChild(createSectionTitle("광고 차단"));
-    panel.appendChild(createSwitchRow("광고 차단", "filters_enabled", data.filtersEnabled));
+    panel.appendChild(
+      createSwitchRow("광고 차단", "filters_enabled", data.filtersEnabled),
+    );
     const ruleValue =
       Number(data.userRuleCount || 0) === Number(data.enabledUserRuleCount || 0)
         ? `${data.userRuleCount || 0}개`
         : `${data.enabledUserRuleCount || 0}/${data.userRuleCount || 0}개 사용`;
-    panel.appendChild(createNavigationRow("사용자 규칙", ruleValue, "openUserRules"));
+    panel.appendChild(
+      createNavigationRow("사용자 규칙", ruleValue, "openUserRules"),
+    );
 
-    panel.appendChild(createSectionTitle(""));
-    panel.appendChild(createNavigationRow("설정 더보기", "", "openMoreSettings"));
+    const moreSettingsSeparator = document.createElement("div");
+    moreSettingsSeparator.className = "nr-more-settings-separator";
+    panel.appendChild(moreSettingsSeparator);
+    panel.appendChild(createNavigationRow("앱 설정 더보기", "", "openMoreSettings"));
+  }
+
+  function syncPanelHeight() {
+    if (!current?.panel || !current.normalPanel) return;
+    const inlineHeight =
+      current.normalPanel.style.height || current.advancedPanel.style.height;
+    if (inlineHeight) {
+      current.panel.style.height = inlineHeight;
+      return;
+    }
+    const rect = current.normalPanel.getBoundingClientRect();
+    current.panel.style.height = rect.height > 0 ? `${rect.height}px` : "380px";
   }
 
   function refresh() {
-    if (!current || !current.panel || !current.panel.isConnected) return;
+    if (!current?.panel?.isConnected) return;
+    syncPanelHeight();
     renderPanel(current.panel, readQuickSettings());
   }
 
-  function setNovelTabActive(active) {
-    const tab = document.getElementById(TAB_ID);
-    if (!tab) return;
-    tab.dataset.nrActive = active ? "1" : "0";
+  function hidePanel() {
+    if (!current?.panel) return;
+    current.panel.style.display = "none";
+    current.novelTab.style.backgroundColor = "rgba(0,0,0,0.2)";
+    current.novelTab.dataset.nrActive = "0";
   }
 
   function showPanel() {
-    if (!current || !current.panel) return;
+    if (!current?.panel) return;
+    current.normalPanel.style.display = "none";
+    current.advancedPanel.style.display = "none";
+    current.normalTab.style.backgroundColor = "rgba(0,0,0,0.2)";
+    current.advancedTab.style.backgroundColor = "rgba(0,0,0,0.2)";
+    current.novelTab.style.backgroundColor = "";
+    current.novelTab.dataset.nrActive = "1";
+    syncPanelHeight();
     current.panel.style.display = "block";
-    setNovelTabActive(true);
     refresh();
-  }
-
-  function hidePanel() {
-    if (!current || !current.panel) return;
-    current.panel.style.display = "none";
-    setNovelTabActive(false);
   }
 
   function inject() {
     const existing = document.getElementById(TAB_ID);
-    if (existing && existing.isConnected) return true;
-
-    const structure = findTabStructure();
-    if (!structure) return false;
-    const root = findSettingsRoot(structure.tabBar);
-    if (!root) return false;
-
-    ensureStyle();
-
-    const novelTab = structure.advancedTab.cloneNode(true);
-    removeDuplicateIds(novelTab);
-    novelTab.id = TAB_ID;
-    replaceAdvancedLabel(novelTab);
-    if (novelTab.tagName === "A") novelTab.removeAttribute("href");
-    novelTab.removeAttribute?.("onclick");
-    novelTab.querySelectorAll?.("a[href]").forEach((element) => element.removeAttribute("href"));
-    novelTab.querySelectorAll?.("[onclick]").forEach((element) => element.removeAttribute("onclick"));
-
-    const tabParent = structure.advancedTab.parentElement;
-    if (!tabParent || tabParent !== structure.normalTab.parentElement) return false;
-    structure.advancedTab.insertAdjacentElement("afterend", novelTab);
-
-    // Reuse Novelpia's own tab dimensions, but split only this tab group evenly.
-    const tabChildren = [structure.normalTab, structure.advancedTab, novelTab];
-    const parentDisplay = getComputedStyle(tabParent).display;
-    if (tabParent.children.length === 3 || parentDisplay.includes("flex")) {
-      tabParent.style.setProperty("display", "flex", "important");
-      tabChildren.forEach((tab) => {
-        tab.style.setProperty("flex", "1 1 0", "important");
-        tab.style.setProperty("width", "0", "important");
-        tab.style.setProperty("min-width", "0", "important");
-        tab.style.setProperty("max-width", "none", "important");
-      });
-    } else {
-      // Preserve unknown decorative children (for example a site-owned tab indicator).
-      tabChildren.forEach((tab) => {
-        tab.style.setProperty("width", "33.3333%", "important");
-        tab.style.setProperty("min-width", "0", "important");
-        tab.style.setProperty("max-width", "33.3333%", "important");
-      });
+    if (existing?.isConnected && document.getElementById(PANEL_ID)?.isConnected) {
+      return true;
     }
 
-    const rootStyle = getComputedStyle(root);
-    if (rootStyle.position === "static") root.style.position = "relative";
+    const nodes = siteNodes();
+    if (!nodes) return false;
+    ensureStyle();
 
-    const rootRect = root.getBoundingClientRect();
-    const tabRect = tabParent.getBoundingClientRect();
+    document.getElementById(TAB_ID)?.remove();
+    document.getElementById(PANEL_ID)?.remove();
+
+    const novelTab = nodes.advancedTab.cloneNode(true);
+    novelTab.id = TAB_ID;
+    novelTab.textContent = "NovelRegEx";
+    novelTab.removeAttribute("onclick");
+    novelTab.querySelectorAll?.("[id]").forEach((el) => el.removeAttribute("id"));
+    novelTab.querySelectorAll?.("[onclick]").forEach((el) => el.removeAttribute("onclick"));
+    novelTab.querySelectorAll?.("a[href]").forEach((el) => el.removeAttribute("href"));
+
+    nodes.normalTab.style.width = "33.3333%";
+    nodes.advancedTab.style.width = "33.3333%";
+    novelTab.style.width = "33.3333%";
+    nodes.advancedTab.insertAdjacentElement("afterend", novelTab);
+
     const panel = document.createElement("div");
     panel.id = PANEL_ID;
-    panel.style.position = "absolute";
-    panel.style.left = "0";
-    panel.style.right = "0";
-    panel.style.top = `${Math.max(0, tabRect.bottom - rootRect.top)}px`;
-    panel.style.bottom = "0";
-    panel.style.zIndex = "2147483000";
-    panel.style.background = backgroundColorFor(root);
     panel.style.display = "none";
-    root.appendChild(panel);
+    panel.style.overflowY = "auto";
+    nodes.advancedPanel.insertAdjacentElement("afterend", panel);
 
     current = {
-      root,
-      panel,
-      normalTab: structure.normalTab,
-      advancedTab: structure.advancedTab,
+      ...nodes,
       novelTab,
+      panel,
     };
+    syncPanelHeight();
 
     novelTab.addEventListener(
       "click",
@@ -510,24 +486,30 @@
       },
       true,
     );
-    [structure.normalTab, structure.advancedTab].forEach((tab) => {
-      tab.addEventListener("click", hidePanel, true);
-    });
+    nodes.normalTab.addEventListener("click", hidePanel, true);
+    nodes.advancedTab.addEventListener("click", hidePanel, true);
     return true;
   }
 
   function scheduleInject() {
-    if (debounceState.timer) clearTimeout(debounceState.timer);
-    debounceState.timer = setTimeout(() => {
-      debounceState.timer = null;
+    if (injectTimer) clearTimeout(injectTimer);
+    injectTimer = setTimeout(() => {
+      injectTimer = null;
       inject();
-    }, 120);
+    }, 80);
   }
 
   const observer = new MutationObserver(scheduleInject);
-  observer.observe(document.documentElement || document, { childList: true, subtree: true });
-  scheduleInject();
+  observer.observe(document.documentElement || document, {
+    childList: true,
+    subtree: true,
+  });
+  window.addEventListener("resize", () => {
+    syncPanelHeight();
+    scheduleInject();
+  });
 
+  scheduleInject();
   window.__novelregexViewerSettings = {
     refresh,
     show: showPanel,

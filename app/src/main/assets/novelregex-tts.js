@@ -371,13 +371,28 @@
 
   function findNextChapterUrl() {
     try {
+      const exact = document.getElementById("next_epi_auto_url");
+      if (exact?.value) {
+        return new URL(exact.value, location.href).href;
+      }
+
+      const nextNo = document.getElementById("content_no_next");
+      if (nextNo?.value && Number(nextNo.value) > 0) {
+        return new URL(`/viewer/${nextNo.value}`, location.origin).href;
+      }
+
+      const bottom = document.getElementById("next_epi_btn_bottom");
+      const rawOnclick = bottom?.getAttribute("onclick") || "";
+      const matched = rawOnclick.match(/check_next_episode_link\s*\(\s*["']?(\d+)/);
+      if (matched?.[1]) {
+        return new URL(`/viewer/${matched[1]}`, location.origin).href;
+      }
+
       const selectors = [
         "#novel_drawing_right",
-        "#next_epi_btn_bottom",
         ".menu-next-item",
         ".btn-next-episode",
       ];
-
       for (const selector of selectors) {
         const element = document.querySelector(selector);
         const anchor = element?.closest?.("a[href]");
@@ -385,14 +400,12 @@
         if (href && !href.startsWith("javascript:")) return href;
       }
 
-      const elements = document.querySelectorAll("a,button,div,span,p,li");
-      for (const element of elements) {
-        const raw = element.innerText || element.textContent || "";
-        const value = raw.replace(/\s/g, "");
-        if (value !== "다음화보기" && value !== "다음화") continue;
-        const anchor = element.closest?.("a[href]");
-        const href = anchor?.href || "";
-        if (href && !href.startsWith("javascript:")) return href;
+      const anchors = document.querySelectorAll("a[href]");
+      for (const anchor of anchors) {
+        const value = (anchor.textContent || "").replace(/\s/g, "");
+        if ((value === "다음화" || value === "다음화보기") && anchor.href) {
+          return anchor.href;
+        }
       }
     } catch (_) {}
     return "";

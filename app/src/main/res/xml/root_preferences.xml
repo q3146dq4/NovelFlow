@@ -36,16 +36,6 @@
         app:defaultValue="0.15"
         app:useSimpleSummaryProvider="true" />
   </PreferenceCategory>
-  <PreferenceCategory app:title="@string/pref_category_tts">
-    <ListPreference
-        app:key="tts_chunk_mode"
-        app:title="@string/pref_key_tts_chunk_mode"
-        app:summary="@string/pref_desc_tts_chunk_mode"
-        app:entries="@array/tts_chunk_mode_entries"
-        app:entryValues="@array/tts_chunk_mode_values"
-        app:defaultValue="paragraph"
-        app:useSimpleSummaryProvider="true" />
-  </PreferenceCategory>
   <PreferenceCategory app:title="@string/pref_category_ad_blocking">
     <SwitchPreferenceCompat
         app:key="filters_enabled"

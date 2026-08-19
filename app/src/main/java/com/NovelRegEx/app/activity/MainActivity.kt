@@ -6,6 +6,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.app.KeyguardManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -126,6 +127,7 @@ class MainActivity : AppCompatActivity() {
     private const val DEFAULT_START_PAGE_URL = "https://novelpia.com/mybook"
     private const val MAX_SCROLL_CACHE = 10
     private const val START_PAGE_KEY = "start_page"
+    private const val TTS_ENGINE_PACKAGE_KEY = "tts_engine_package"
     private val TRUSTED_DOCUMENT_ORIGINS =
       setOf(
         "https://novelpia.com",
@@ -153,6 +155,9 @@ class MainActivity : AppCompatActivity() {
       path == "/viewer" || path.startsWith("/viewer/")
     }.getOrDefault(false)
   }
+
+  private fun isInternalWebViewErrorUrl(url: String?): Boolean =
+    url?.startsWith("chrome-error://", ignoreCase = true) == true
 
   private data class TtsSentence(
     val line: Int,
@@ -324,20 +329,39 @@ class MainActivity : AppCompatActivity() {
 
     webView.webViewClient = object : WebViewClient() {
       override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
-        currentPageIsViewer = isViewerUrl(url)
+        val viewerUrl = isViewerUrl(url)
+        val internalErrorUrl = isInternalWebViewErrorUrl(url)
         visibleViewerReady = false
-        if (currentPageIsViewer) {
-          ttsController.markPageStarted(url)
-        } else {
-          ttsController.close()
+
+        when {
+          viewerUrl -> {
+            currentPageIsViewer = true
+            ttsController.markPageStarted(url)
+          }
+          internalErrorUrl && ttsController.needsBackgroundWebView() -> {
+            // A failed screen-off navigation may temporarily expose chrome-error://.
+            // Do not interpret that renderer-owned error document as the user leaving
+            // the viewer, otherwise close() would kill otherwise healthy TTS playback.
+            android.util.Log.w("NovelWebView", "Internal error document while TTS is active: $url")
+          }
+          else -> {
+            currentPageIsViewer = false
+            ttsController.close()
+          }
         }
         super.onPageStarted(view, url, favicon)
       }
 
       override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
         super.doUpdateVisitedHistory(view, url, isReload)
-        currentPageIsViewer = isViewerUrl(url)
-        if (!currentPageIsViewer) ttsController.close()
+        when {
+          isViewerUrl(url) -> currentPageIsViewer = true
+          isInternalWebViewErrorUrl(url) && ttsController.needsBackgroundWebView() -> Unit
+          else -> {
+            currentPageIsViewer = false
+            ttsController.close()
+          }
+        }
       }
 
       override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
@@ -363,7 +387,32 @@ class MainActivity : AppCompatActivity() {
       ) {
         super.onReceivedError(view, request, error)
         if (request.isForMainFrame) {
-          ttsController.onViewerMainFrameError(request.url.toString())
+          val code = error.errorCode
+          val description = error.description?.toString().orEmpty()
+          android.util.Log.e(
+            "NovelWebView",
+            "MAIN_FRAME_ERROR code=$code description=$description url=${request.url}",
+          )
+          ttsController.onViewerMainFrameError(request.url.toString(), code, description)
+        }
+      }
+
+      override fun onReceivedHttpError(
+        view: WebView,
+        request: WebResourceRequest,
+        errorResponse: WebResourceResponse,
+      ) {
+        super.onReceivedHttpError(view, request, errorResponse)
+        if (request.isForMainFrame) {
+          android.util.Log.w(
+            "NovelWebView",
+            "MAIN_FRAME_HTTP status=${errorResponse.statusCode} reason=${errorResponse.reasonPhrase} url=${request.url}",
+          )
+          ttsController.onViewerMainFrameError(
+            request.url.toString(),
+            -errorResponse.statusCode,
+            "HTTP ${errorResponse.statusCode} ${errorResponse.reasonPhrase}",
+          )
         }
       }
 
@@ -392,69 +441,89 @@ class MainActivity : AppCompatActivity() {
   private fun injectBottomListenButton(view: WebView) {
     val js = """
       (function() {
-        if (window.__npTtsBtnInterval) return;
-        window.__npTtsBtnInterval = setInterval(function() {
-          if (document.getElementById('np-tts-injected-btn')) return;
+        function injectListenButton() {
+          if (document.getElementById('np-tts-injected-btn')) return true;
 
-          var buttons = document.querySelectorAll('li, a, div, span');
-          var recommendBtn = null;
-          
-          for (var i = 0; i < buttons.length; i++) {
-            var btn = buttons[i];
-            if (btn.innerText && btn.innerText.trim() === '추천') {
-              var rect = btn.getBoundingClientRect();
-              if (rect.top > window.innerHeight / 2) {
-                recommendBtn = btn.closest('li, a, div[class*="item"], div[class*="btn"]') || btn;
-                break;
-              }
+          var wrapper = document.querySelector('#footer_bar .menu-bottom-wrapper');
+          if (!wrapper) return false;
+
+          var recent = null;
+          var children = Array.prototype.slice.call(wrapper.children || []);
+          for (var i = 0; i < children.length; i++) {
+            var child = children[i];
+            if (!child.classList || !child.classList.contains('menu-bottom-item')) continue;
+            var onclick = child.getAttribute('onclick') || '';
+            var text = (child.textContent || '').replace(/\s+/g, '').trim();
+            if (onclick.indexOf('/mybook/last_view') >= 0 || text === '최근기록') {
+              recent = child;
+              break;
             }
           }
-          if (!recommendBtn) return;
+          if (!recent) return false;
 
-          var listenBtn = recommendBtn.cloneNode(true);
-          listenBtn.id = 'np-tts-injected-btn';
-          listenBtn.style.cursor = 'pointer';
-          listenBtn.innerHTML = listenBtn.innerHTML.replace('추천', '듣기');
+          var listen = recent.cloneNode(true);
+          listen.id = 'np-tts-injected-btn';
+          listen.removeAttribute('onclick');
+          listen.removeAttribute('href');
+          listen.style.cursor = 'pointer';
 
-          var iconEl = listenBtn.querySelector('svg, i, img, span[class*="icon"]');
-          if (iconEl) {
-            var iconClass = iconEl.getAttribute('class') || '';
-            iconEl.outerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="' + iconClass + '"><path d="M3 18v-6a9 9 0 0 1 18 0v6"></path><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path></svg>';
+          var descendants = listen.querySelectorAll('*');
+          for (var j = 0; j < descendants.length; j++) {
+            descendants[j].removeAttribute('id');
+            descendants[j].removeAttribute('onclick');
+            descendants[j].removeAttribute('href');
           }
 
-          if (listenBtn.tagName === 'A') listenBtn.removeAttribute('href');
-          var children = listenBtn.querySelectorAll('*');
-          for(var j=0; j<children.length; j++) {
-            if (children[j].removeAttribute) {
-              children[j].removeAttribute('onclick');
-              children[j].removeAttribute('href');
-            }
+          var label = listen.querySelector('span.footer_btn') || listen.querySelector('span');
+          if (label) label.textContent = '듣기';
+
+          var icon = listen.querySelector('img,svg,i');
+          if (icon) {
+            var cls = icon.getAttribute('class') || 'footer_btn';
+            var style = icon.getAttribute('style') || '';
+            icon.outerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="' + cls + '" style="' + style + '"><path d="M3 18v-6a9 9 0 0 1 18 0v6"></path><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path></svg>';
           }
 
-          listenBtn.addEventListener('click', function(e) {
+          listen.addEventListener('click', function(e) {
             e.preventDefault();
             e.stopPropagation();
-            if (window._NPTTS && typeof window._NPTTS.open === "function") window._NPTTS.open();
+            if (window._NPTTS && typeof window._NPTTS.open === 'function') {
+              window._NPTTS.open();
+            }
           }, true);
 
-          var parentUl = recommendBtn.parentNode;
-          parentUl.insertBefore(listenBtn, recommendBtn);
-          
-          parentUl.style.display = 'flex';
-          parentUl.style.justifyContent = 'space-between';
-          parentUl.style.width = '100%';
-          parentUl.style.padding = '0';
-          
-          var allItems = parentUl.children;
-          for(var k=0; k<allItems.length; k++) {
-              allItems[k].style.flex = '1 1 0';
-              allItems[k].style.width = 'auto';
-              allItems[k].style.display = 'flex';
-              allItems[k].style.flexDirection = 'column';
-              allItems[k].style.alignItems = 'center';
-              allItems[k].style.justifyContent = 'center';
+          recent.insertAdjacentElement('afterend', listen);
+
+          // Novelpia originally lays out five footer children. There are now six;
+          // distribute only this known footer group evenly.
+          wrapper.style.display = 'flex';
+          wrapper.style.justifyContent = 'space-between';
+          wrapper.style.width = '100%';
+          wrapper.style.padding = '0';
+          var footerItems = Array.prototype.slice.call(wrapper.children || []);
+          for (var k = 0; k < footerItems.length; k++) {
+            footerItems[k].style.flex = '1 1 0';
+            footerItems[k].style.width = '0';
+            footerItems[k].style.minWidth = '0';
           }
-        }, 1000);
+
+          var recommendHost = document.getElementById('recommend_tap');
+          if (recommendHost) {
+            recommendHost.style.display = 'flex';
+            recommendHost.style.alignItems = 'stretch';
+            recommendHost.style.justifyContent = 'center';
+            var recommendInner = recommendHost.querySelector('.menu-bottom-item');
+            if (recommendInner) recommendInner.style.width = '100%';
+          }
+          return true;
+        }
+
+        if (injectListenButton()) return;
+        var observer = new MutationObserver(function() {
+          if (injectListenButton()) observer.disconnect();
+        });
+        observer.observe(document.documentElement || document, { childList: true, subtree: true });
+        setTimeout(function() { observer.disconnect(); }, 10000);
       })();
     """.trimIndent()
     view.evaluateJavascript(js, null)
@@ -474,7 +543,7 @@ class MainActivity : AppCompatActivity() {
       override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
         super.onPageStarted(view, url, favicon)
         ttsController.markPreloadPageStarted(url)
-        if (!isViewerUrl(url)) {
+        if (!isViewerUrl(url) && !isInternalWebViewErrorUrl(url)) {
           ttsController.clearPreloadedChapter()
         }
       }
@@ -486,7 +555,32 @@ class MainActivity : AppCompatActivity() {
       ) {
         super.onReceivedError(view, request, error)
         if (request.isForMainFrame) {
-          ttsController.onPreloadMainFrameError(request.url.toString())
+          val code = error.errorCode
+          val description = error.description?.toString().orEmpty()
+          android.util.Log.e(
+            "NovelWebView",
+            "PRELOAD_FRAME_ERROR code=$code description=$description url=${request.url}",
+          )
+          ttsController.onPreloadMainFrameError(request.url.toString(), code, description)
+        }
+      }
+
+      override fun onReceivedHttpError(
+        view: WebView,
+        request: WebResourceRequest,
+        errorResponse: WebResourceResponse,
+      ) {
+        super.onReceivedHttpError(view, request, errorResponse)
+        if (request.isForMainFrame) {
+          android.util.Log.w(
+            "NovelWebView",
+            "PRELOAD_FRAME_HTTP status=${errorResponse.statusCode} reason=${errorResponse.reasonPhrase} url=${request.url}",
+          )
+          ttsController.onPreloadMainFrameError(
+            request.url.toString(),
+            -errorResponse.statusCode,
+            "HTTP ${errorResponse.statusCode} ${errorResponse.reasonPhrase}",
+          )
         }
       }
 
@@ -520,8 +614,8 @@ class MainActivity : AppCompatActivity() {
     val menuItems = listOf(
       MainMenuItem.QuickActions(listOf(MainMenuAction.Back, MainMenuAction.Forward, MainMenuAction.Refresh, MainMenuAction.Bookmarks, MainMenuAction.StartPage)),
       MainMenuItem.Divider,
-      MainMenuItem.Action(R.drawable.ic_settings_24, getString(R.string.menu_settings), MainMenuAction.Settings),
-      MainMenuItem.Action(R.drawable.ic_settings_24, "TTS 정규식 설정", MainMenuAction.TtsRegexSettings)
+      MainMenuItem.Action(R.drawable.ic_settings_24, "일반 설정", MainMenuAction.Settings),
+      MainMenuItem.Action(R.drawable.ic_settings_24, "TTS 설정", MainMenuAction.TtsSettings)
     )
     var dialog: AlertDialog? = null
     AlertDialog.Builder(this)
@@ -542,7 +636,7 @@ class MainActivity : AppCompatActivity() {
       MainMenuAction.Bookmarks -> openBookmarks()
       MainMenuAction.StartPage -> openStartPage()
       MainMenuAction.Settings -> startActivity(Intent(this, SettingsActivity::class.java))
-      MainMenuAction.TtsRegexSettings -> startActivity(Intent(this, TtsRegexSettingsActivity::class.java))
+      MainMenuAction.TtsSettings -> startActivity(Intent(this, TtsSettingsActivity::class.java))
     }
   }
 
@@ -628,14 +722,14 @@ class MainActivity : AppCompatActivity() {
     Bookmarks(R.drawable.ic_star_24, R.string.menu_bookmarks),
     StartPage(R.drawable.ic_home_24, R.string.menu_start_page),
     Settings(R.drawable.ic_settings_24, R.string.menu_settings),
-    TtsRegexSettings(R.drawable.ic_settings_24, R.string.menu_settings),
+    TtsSettings(R.drawable.ic_settings_24, R.string.menu_settings),
   }
 
   private fun MainMenuAction.isAvailable(): Boolean =
     when (this) {
       MainMenuAction.Back -> webView.canGoBack()
       MainMenuAction.Forward -> webView.canGoForward()
-      MainMenuAction.Bookmarks, MainMenuAction.Refresh, MainMenuAction.StartPage, MainMenuAction.Settings, MainMenuAction.TtsRegexSettings -> true
+      MainMenuAction.Bookmarks, MainMenuAction.Refresh, MainMenuAction.StartPage, MainMenuAction.Settings, MainMenuAction.TtsSettings -> true
     }
 
   private fun TextView.bindIconMenuItem(iconRes: Int, title: String) {
@@ -718,12 +812,27 @@ class MainActivity : AppCompatActivity() {
     ttsController.refreshCompiledTtsRules()
   }
 
+  fun refreshTtsEngineFromViewerSettings() {
+    ttsController.refreshSystemTtsEngineIfChanged()
+  }
+
+  fun refreshViewerQuickSettingsPanel() {
+    runOnUiThread {
+      if (!::webView.isInitialized || !isViewerUrl(webView.url)) return@runOnUiThread
+      webView.evaluateJavascript(
+        "window.__novelregexViewerSettings&&window.__novelregexViewerSettings.refresh&&window.__novelregexViewerSettings.refresh();",
+        null,
+      )
+    }
+  }
+
   override fun onResume() {
     super.onResume()
     keepWebViewTimersRunning()
     if (::preloadWebView.isInitialized) preloadWebView.onResume()
     ttsController.refreshCompiledTtsRules()
     ttsController.refreshSystemTtsEngineIfChanged()
+    ttsController.onHostInteractive()
     webView.evaluateJavascript(
       "window.__novelregexViewerSettings&&window.__novelregexViewerSettings.refresh&&window.__novelregexViewerSettings.refresh();",
       null,
@@ -745,6 +854,13 @@ class MainActivity : AppCompatActivity() {
     // WebView.onResume() is an instance API and is sufficient here because
     // we never pause this WebView during the binge lifecycle.
     webView.onResume()
+  }
+
+  override fun onWindowFocusChanged(hasFocus: Boolean) {
+    super.onWindowFocusChanged(hasFocus)
+    if (hasFocus && ::ttsController.isInitialized) {
+      ttsController.onHostInteractive()
+    }
   }
 
   override fun onSaveInstanceState(outState: Bundle) {
@@ -805,6 +921,12 @@ class MainActivity : AppCompatActivity() {
     private var currentSentencePartIndex = 0
     private var failedChunkKey: String? = null
     private var failedChunkRetryCount = 0
+    private var engineRecoveryAttempts = 0
+    private var engineRecoveryInProgress = false
+    private var nextChapterNavigationWatchdogSerial = 0
+    private var nextChapterNavigationWatchdogAttempt = 0
+    private var playbackChapterUrl: String? = null
+    private var deferredVisibleChapterUrl: String? = null
 
     private var overlayRoot: View? = null
     private var titleText: TextView? = null
@@ -885,6 +1007,13 @@ class MainActivity : AppCompatActivity() {
       }
     }
 
+    private fun readAppSelectedTtsEngine(): String? =
+      PreferenceManager
+        .getDefaultSharedPreferences(this@MainActivity)
+        .getString(TTS_ENGINE_PACKAGE_KEY, "")
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+
     @Suppress("DEPRECATION")
     private fun readSystemDefaultTtsEngine(): String? =
       Settings.Secure
@@ -892,7 +1021,10 @@ class MainActivity : AppCompatActivity() {
         ?.trim()
         ?.takeIf { it.isNotEmpty() }
 
-    private fun initializeTtsEngine(enginePackage: String? = readSystemDefaultTtsEngine()) {
+    private fun readPreferredTtsEngine(): String? =
+      readAppSelectedTtsEngine() ?: readSystemDefaultTtsEngine()
+
+    private fun initializeTtsEngine(enginePackage: String? = readPreferredTtsEngine()) {
       val serial = ++ttsInitSerial
       requestedTtsEngine = enginePackage
       ttsReady = false
@@ -919,7 +1051,53 @@ class MainActivity : AppCompatActivity() {
       if (serial != ttsInitSerial) return
 
       if (status != TextToSpeech.SUCCESS) {
+        val failedPackage = requestedTtsEngine
+        val appSelected = readAppSelectedTtsEngine()
+        if (!appSelected.isNullOrBlank() && failedPackage == appSelected) {
+          PreferenceManager
+            .getDefaultSharedPreferences(this@MainActivity)
+            .edit()
+            .remove(TTS_ENGINE_PACKAGE_KEY)
+            .apply()
+
+          val shouldResume = active && !paused && currentChunkIndex in playbackChunks.indices
+          engineReinitChunkIndex = if (shouldResume) currentChunkIndex else -1
+          resumeAfterEngineReinit = shouldResume
+          engineRecoveryInProgress = shouldResume
+          engineRecoveryAttempts = 0
+          Toast.makeText(
+            this@MainActivity,
+            "선택한 TTS 엔진을 사용할 수 없어 시스템 기본 엔진으로 전환합니다.",
+            Toast.LENGTH_LONG,
+          ).show()
+          initializeTtsEngine(readSystemDefaultTtsEngine())
+          return
+        }
+
         ttsReady = false
+        if (
+          engineRecoveryInProgress &&
+          resumeAfterEngineReinit &&
+          active &&
+          !paused &&
+          engineRecoveryAttempts < 3
+        ) {
+          engineRecoveryAttempts++
+          val retrySerial = ttsInitSerial
+          mainHandler.postDelayed({
+            if (
+              active &&
+              !paused &&
+              resumeAfterEngineReinit &&
+              retrySerial == ttsInitSerial
+            ) {
+              initializeTtsEngine(requestedTtsEngine ?: readPreferredTtsEngine())
+            }
+          }, 700L * engineRecoveryAttempts)
+          return
+        }
+
+        engineRecoveryInProgress = false
         resumeAfterEngineReinit = false
         if (active) {
           active = false
@@ -954,6 +1132,7 @@ class MainActivity : AppCompatActivity() {
       boundTtsEngine = tts.defaultEngine ?: requestedTtsEngine
       requestedTtsEngine = null
       ttsReady = true
+      engineRecoveryInProgress = false
 
       if (resumeAfterEngineReinit) {
         val shouldResume = active && !paused
@@ -979,10 +1158,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun refreshSystemTtsEngineIfChanged() {
-      val systemEngine = readSystemDefaultTtsEngine() ?: return
+      val preferredEngine = readPreferredTtsEngine() ?: return
       val currentEngine = boundTtsEngine ?: textToSpeech?.defaultEngine ?: requestedTtsEngine
-      if (systemEngine == currentEngine) return
-      if (!ttsReady && systemEngine == requestedTtsEngine) return
+      if (preferredEngine == currentEngine) return
+      if (!ttsReady && preferredEngine == requestedTtsEngine) return
 
       val shouldResume = active && !paused && currentChunkIndex in playbackChunks.indices
       engineReinitChunkIndex = if (shouldResume) currentChunkIndex else -1
@@ -990,7 +1169,7 @@ class MainActivity : AppCompatActivity() {
 
       // Ignore stale callbacks/queued utterances from the old engine.
       advanceGeneration()
-      initializeTtsEngine(systemEngine)
+      initializeTtsEngine(preferredEngine)
     }
 
     fun markPageStarted(url: String?) {
@@ -1014,6 +1193,8 @@ class MainActivity : AppCompatActivity() {
       if (!currentPageIsViewer) return
       if (sameViewerUrl(webView.url, failedVisibleChapterUrl)) return
 
+      nextChapterNavigationWatchdogSerial++
+      nextChapterNavigationWatchdogAttempt = 0
       visibleChapterLoadRetryCount = 0
       visibleChapterRetryScheduled = false
       val visibleUrl = webView.url
@@ -1024,8 +1205,17 @@ class MainActivity : AppCompatActivity() {
       ) {
         expectedVisibleChapterUrl = null
       }
+      if (!visibleUrl.isNullOrBlank() && sameViewerUrl(visibleUrl, playbackChapterUrl)) {
+        deferredVisibleChapterUrl = null
+      }
 
       if (waitingForNextChapter) {
+        if (
+          !visibleUrl.isNullOrBlank() &&
+          !sameViewerUrl(visibleUrl, pendingChapterFromUrl)
+        ) {
+          playbackChapterUrl = visibleUrl
+        }
         if (tryStartFromPreloadedChapter()) return
         if (chapterBuildInProgress) return
         retryCount = 0
@@ -1042,36 +1232,85 @@ class MainActivity : AppCompatActivity() {
       }
     }
 
-    fun onViewerMainFrameError(url: String) {
+    fun onViewerMainFrameError(
+      url: String,
+      errorCode: Int = WebViewClient.ERROR_UNKNOWN,
+      description: String = "",
+    ) {
       if (!isViewerUrl(url)) return
       if (!active && !waitingForNextChapter) return
       failedVisibleChapterUrl = url
-      val expected = expectedVisibleChapterUrl ?: return
-      if (!sameViewerUrl(url, expected)) return
+
+      val target = expectedVisibleChapterUrl ?: deferredVisibleChapterUrl ?: playbackChapterUrl ?: return
+      if (!sameViewerUrl(url, target)) return
+
+      android.util.Log.w(
+        "NovelTTS",
+        "Visible viewer load failed code=$errorCode description=$description url=$url",
+      )
+
+      if (!hostCanRenderViewerNow()) {
+        expectedVisibleChapterUrl = null
+        visibleChapterRetryScheduled = false
+        deferVisibleChapter(target, "screen-off-main-frame-error-$errorCode")
+        return
+      }
       if (visibleChapterRetryScheduled) return
+
+      if (visibleChapterLoadRetryCount >= 4) {
+        deferVisibleChapter(target, "visible-load-retry-exhausted")
+        return
+      }
 
       val attempt = visibleChapterLoadRetryCount++
       val delayMs = minOf(4_000L, 500L * (1L shl attempt.coerceAtMost(3)))
       visibleChapterRetryScheduled = true
       mainHandler.postDelayed({
         visibleChapterRetryScheduled = false
-        if ((!active && !waitingForNextChapter) || expectedVisibleChapterUrl == null) return@postDelayed
-        if (!sameViewerUrl(url, expectedVisibleChapterUrl)) return@postDelayed
-        webView.stopLoading()
-        webView.loadUrl(url)
+        if ((!active && !waitingForNextChapter) || !hostCanRenderViewerNow()) {
+          deferVisibleChapter(target, "retry-deferred")
+          return@postDelayed
+        }
+        if (!sameViewerUrl(target, expectedVisibleChapterUrl ?: deferredVisibleChapterUrl ?: playbackChapterUrl)) {
+          return@postDelayed
+        }
+        syncVisibleChapterIfPossible(target, "main-frame-retry-${attempt + 1}")
       }, delayMs)
     }
 
-    fun onPreloadMainFrameError(url: String) {
+    fun onPreloadMainFrameError(
+      url: String,
+      errorCode: Int = WebViewClient.ERROR_UNKNOWN,
+      description: String = "",
+    ) {
       if (!preloadInFlight || !isViewerUrl(url)) return
       failedPreloadChapterUrl = url
       val target = preloadedChapterUrl ?: return
       if (!sameViewerUrl(url, target)) return
 
+      android.util.Log.w(
+        "NovelTTS",
+        "Preload viewer failed code=$errorCode description=$description url=$url",
+      )
+
+      // Repeated retries while the device is locked only churn WebView into its
+      // chrome-error document. Keep the target URL and restart preload on unlock.
+      if (!hostCanRenderViewerNow()) {
+        preloadInFlight = false
+        preloadedChapterJson = null
+        preloadPageRetryCount = 0
+        syncPlaybackLocks()
+        return
+      }
+
       if (preloadPageRetryCount < 3) {
         val attempt = ++preloadPageRetryCount
         mainHandler.postDelayed({
-          if (preloadInFlight && sameViewerUrl(preloadedChapterUrl, target)) {
+          if (
+            preloadInFlight &&
+            hostCanRenderViewerNow() &&
+            sameViewerUrl(preloadedChapterUrl, target)
+          ) {
             preloadWebView.stopLoading()
             preloadWebView.loadUrl(target)
           }
@@ -1094,6 +1333,64 @@ class MainActivity : AppCompatActivity() {
       }.getOrDefault(false)
     }
 
+    private fun hostCanRenderViewerNow(): Boolean {
+      val power = getSystemService(Context.POWER_SERVICE) as PowerManager
+      val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+      return power.isInteractive && !keyguard.isKeyguardLocked
+    }
+
+    private fun deferVisibleChapter(url: String, reason: String) {
+      if (!isViewerUrl(url)) return
+      deferredVisibleChapterUrl = url
+      android.util.Log.i("NovelTTS", "Deferring visible viewer navigation ($reason): $url")
+    }
+
+    private fun syncVisibleChapterIfPossible(url: String, reason: String): Boolean {
+      if (!isViewerUrl(url)) return false
+      if (!hostCanRenderViewerNow()) {
+        deferVisibleChapter(url, reason)
+        return false
+      }
+
+      deferredVisibleChapterUrl = null
+      failedVisibleChapterUrl = null
+      visibleChapterLoadRetryCount = 0
+      visibleChapterRetryScheduled = false
+
+      if (sameViewerUrl(webView.url, url) && visibleViewerReady) {
+        expectedVisibleChapterUrl = null
+        return true
+      }
+
+      expectedVisibleChapterUrl = url
+      if (waitingForNextChapter) nextChapterNavigationStarted = true
+      android.util.Log.i("NovelTTS", "Synchronizing visible viewer ($reason): $url")
+      webView.stopLoading()
+      webView.loadUrl(url)
+      return true
+    }
+
+    private fun visibleViewerMatchesPlayback(): Boolean {
+      val playbackUrl = playbackChapterUrl ?: return true
+      return sameViewerUrl(webView.url, playbackUrl)
+    }
+
+    fun onHostInteractive() {
+      if (!hostCanRenderViewerNow()) return
+
+      val deferred = deferredVisibleChapterUrl
+      if (!deferred.isNullOrBlank()) {
+        syncVisibleChapterIfPossible(deferred, "host-interactive")
+      }
+
+      if (waitingForNextChapter) {
+        if (tryStartFromPreloadedChapter()) return
+        if (!nextChapterNavigationStarted) requestNextChapter(0)
+      } else if (active) {
+        prepareNextChapterPreload()
+      }
+    }
+
     private fun clearPreloadState() {
       preloadedChapterUrl = null
       preloadedChapterJson = null
@@ -1114,7 +1411,7 @@ class MainActivity : AppCompatActivity() {
       val cached =
         cachedNextChapterUrl
           ?.takeIf(::isViewerUrl)
-          ?.takeIf { !sameViewerUrl(it, webView.url) }
+          ?.takeIf { !sameViewerUrl(it, playbackChapterUrl ?: webView.url) }
       if (cached != null) {
         startNextChapterPreload(cached)
         return
@@ -1136,7 +1433,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startNextChapterPreload(url: String) {
-      if (!bingeMode || !isViewerUrl(url) || sameViewerUrl(url, webView.url)) return
+      if (!bingeMode || !isViewerUrl(url) || sameViewerUrl(url, playbackChapterUrl ?: webView.url)) return
       if (preloadInFlight && sameViewerUrl(preloadedChapterUrl, url)) return
 
       preloadInFlight = true
@@ -1214,22 +1511,24 @@ class MainActivity : AppCompatActivity() {
       if (!waitingForNextChapter || url.isNullOrBlank() || json.isNullOrBlank()) return false
       if (sameViewerUrl(url, pendingChapterFromUrl)) return false
 
-      expectedVisibleChapterUrl = url
-      nextChapterNavigationStarted = true
+      playbackChapterUrl = url
       preloadedChapterUrl = null
       preloadedChapterJson = null
       preloadInFlight = false
       preloadCollectRetry = 0
       preloadPageRetryCount = 0
+      nextChapterNavigationStarted = false
       syncPlaybackLocks()
 
-      webView.loadUrl(url)
+      // This is the key screen-off separation: TTS consumes the already collected
+      // chapter JSON regardless of whether the visible WebView can navigate now.
       startCollectedChapterAsync(
         decoded = json,
         forNextChapter = true,
         startAnchor = null,
         onFailure = { if (waitingForNextChapter) requestNextChapter(0) },
       )
+      syncVisibleChapterIfPossible(url, "preloaded-chapter-start")
       return true
     }
 
@@ -1375,10 +1674,13 @@ class MainActivity : AppCompatActivity() {
         sentences.addAll(chapter.sentences)
         playbackChunks.clear()
         playbackChunks.addAll(chunks)
+        if (!forNextChapter) {
+          webView.url?.takeIf(::isViewerUrl)?.let { playbackChapterUrl = it }
+        }
         cachedNextChapterUrl =
           chapter.nextChapterUrl
             ?.takeIf(::isViewerUrl)
-            ?.takeIf { !sameViewerUrl(it, webView.url) }
+            ?.takeIf { !sameViewerUrl(it, playbackChapterUrl ?: webView.url) }
 
         val initialChunkIndex = if (forNextChapter) 0 else resolveInitialChunkIndex(startAnchor)
         currentSentenceIndex = -1
@@ -1399,7 +1701,7 @@ class MainActivity : AppCompatActivity() {
         advanceGeneration()
         updatePlayButton()
         speakNext()
-        mainHandler.postDelayed({ prepareNextChapterPreload() }, 900L)
+        mainHandler.postDelayed({ prepareNextChapterPreload() }, 150L)
       }
     }
 
@@ -1808,11 +2110,49 @@ class MainActivity : AppCompatActivity() {
     private fun chunkFailureKey(chunk: TtsSpeechChunk): String =
       "${chunk.startSentenceIndex}:${chunk.endSentenceIndexExclusive}:${chunk.commaPartIndex ?: -1}"
 
-    /**
-     * 짧은 쉼표 조각을 간헐적으로 거부하는 TTS 엔진이 있다. 실패한 조각을 그대로
-     * 건너뛰지 않고 두 번 재시도하며, 그래도 실패하면 해당 문장 전체로 재시도한다.
-     */
-    private fun handleChunkFailure(chunk: TtsSpeechChunk) {
+    private fun shouldReinitializeAfterTtsError(errorCode: Int): Boolean =
+      errorCode != TextToSpeech.ERROR_INVALID_REQUEST &&
+        errorCode != TextToSpeech.ERROR_NOT_INSTALLED_YET
+
+    private fun recoverTtsEngine(
+      chunk: TtsSpeechChunk,
+      errorCode: Int,
+    ): Boolean {
+      if (!active || paused || engineRecoveryInProgress || engineRecoveryAttempts >= 2) return false
+
+      engineRecoveryAttempts++
+      engineRecoveryInProgress = true
+      engineReinitChunkIndex = currentChunkIndex.coerceIn(0, playbackChunks.lastIndex)
+      resumeAfterEngineReinit = true
+      currentSentenceIndex = chunk.startSentenceIndex
+      currentSentencePartIndex = chunk.commaPartIndex ?: 0
+      advanceGeneration()
+      syncPlaybackLocks()
+
+      android.util.Log.w(
+        "NovelTTS",
+        "Reinitializing TTS engine after error=$errorCode at chunk=$engineReinitChunkIndex attempt=$engineRecoveryAttempts",
+      )
+
+      val recoveryGeneration = generation
+      mainHandler.postDelayed({
+        if (
+          active &&
+          !paused &&
+          resumeAfterEngineReinit &&
+          engineRecoveryInProgress &&
+          generation == recoveryGeneration
+        ) {
+          initializeTtsEngine(requestedTtsEngine ?: readPreferredTtsEngine())
+        }
+      }, 400L * engineRecoveryAttempts)
+      return true
+    }
+
+    private fun handleChunkFailure(
+      chunk: TtsSpeechChunk,
+      errorCode: Int = TextToSpeech.ERROR,
+    ) {
       if (!active || paused) return
 
       textToSpeech?.stop()
@@ -1824,18 +2164,27 @@ class MainActivity : AppCompatActivity() {
       }
 
       if (failedChunkRetryCount < 2) {
+        val delayMs = if (failedChunkRetryCount == 0) 250L else 650L
         failedChunkRetryCount++
         advanceGeneration()
         val retryGeneration = generation
         currentSentenceIndex = chunk.startSentenceIndex
         currentSentencePartIndex = chunk.commaPartIndex ?: 0
         mainHandler.postDelayed({
-          if (active && !paused && generation == retryGeneration &&
+          if (
+            active &&
+            !paused &&
+            generation == retryGeneration &&
             currentSentenceIndex == chunk.startSentenceIndex
           ) {
             speakCurrent()
           }
-        }, 120L)
+        }, delayMs)
+        return
+      }
+
+      if (shouldReinitializeAfterTtsError(errorCode) && recoverTtsEngine(chunk, errorCode)) {
+        failedChunkRetryCount = 0
         return
       }
 
@@ -1846,17 +2195,21 @@ class MainActivity : AppCompatActivity() {
       currentSentencePartIndex = 0
 
       if (chunk.commaPartIndex == null && chunk.parts.size <= 1) {
-        Toast.makeText(this@MainActivity, "TTS 엔진이 이 문장을 재생하지 못했습니다.", Toast.LENGTH_SHORT).show()
+        Toast
+          .makeText(
+            this@MainActivity,
+            "TTS 엔진 복구 후에도 이 문장을 재생하지 못했습니다. (오류 $errorCode)",
+            Toast.LENGTH_SHORT,
+          ).show()
         advanceAfterChunk(chunk)
         return
       }
 
-      // 쉼표 조각 또는 큰 문단 청크가 계속 실패해도 원문을 건너뛰지는 않는다.
-      // 문장 하나로 낮춰 재생하므로 쉼표 모드에서는 앞부분이 드물게 중복될 수 있다.
       if (chunk.commaPartIndex != null) {
-        val lastChunkOfSentence = playbackChunks.indexOfLast {
-          it.startSentenceIndex == chunk.startSentenceIndex
-        }
+        val lastChunkOfSentence =
+          playbackChunks.indexOfLast {
+            it.startSentenceIndex == chunk.startSentenceIndex
+          }
         if (lastChunkOfSentence >= currentChunkIndex) currentChunkIndex = lastChunkOfSentence
       }
       speakCurrent(modeOverride = TtsPreferences.CHUNK_MODE_SENTENCE)
@@ -1916,6 +2269,7 @@ class MainActivity : AppCompatActivity() {
         }
         failedChunkKey = null
         failedChunkRetryCount = 0
+        engineRecoveryAttempts = 0
 
         if (!request.rolling || activeRollingPreQueueDepth <= 0) {
           currentChunkIndex = request.resumeAfterChunkIndex
@@ -1976,7 +2330,8 @@ class MainActivity : AppCompatActivity() {
         currentSentenceIndex = request.chunk.startSentenceIndex
         currentSentencePartIndex = request.chunk.commaPartIndex ?: 0
         clearQueuedSpeechState()
-        handleChunkFailure(request.chunk)
+        android.util.Log.w("NovelTTS", "Utterance failed: id=$utteranceId error=$errorCode")
+        handleChunkFailure(request.chunk, errorCode)
       }
     }
 
@@ -1990,6 +2345,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun highlightCurrentChunk() {
       val chunk = activeChunk ?: return
+      if (!visibleViewerMatchesPlayback()) return
       val commaPartIndex = chunk.commaPartIndex ?: -1
       webView.evaluateJavascript(
         "window.__npTts&&window.__npTts.highlightChunk(${chunk.startSentenceIndex},${chunk.endSentenceIndexExclusive},$commaPartIndex)",
@@ -2008,10 +2364,69 @@ class MainActivity : AppCompatActivity() {
       counterText?.text = "${chunkIndex + 1} / ${playbackChunks.size}"
       progressView?.progress =
         if (playbackChunks.size <= 1) 0f else chunkIndex.toFloat() / playbackChunks.lastIndex
-      webView.evaluateJavascript(
-        "window.__npTts&&window.__npTts.scrollToLine(${sentences[chunk.startSentenceIndex].line})",
-        null,
-      )
+      if (visibleViewerMatchesPlayback()) {
+        webView.evaluateJavascript(
+          "window.__npTts&&window.__npTts.scrollToLine(${sentences[chunk.startSentenceIndex].line})",
+          null,
+        )
+      }
+    }
+
+    private fun navigateToNextChapterWithWatchdog(url: String) {
+      if (!waitingForNextChapter || !isViewerUrl(url)) return
+
+      if (!hostCanRenderViewerNow()) {
+        expectedVisibleChapterUrl = null
+        nextChapterNavigationStarted = false
+        deferVisibleChapter(url, "screen-off-next-chapter")
+        if (
+          !preloadInFlight &&
+          (preloadedChapterJson.isNullOrBlank() || !sameViewerUrl(preloadedChapterUrl, url))
+        ) {
+          startNextChapterPreload(url)
+        }
+        return
+      }
+
+      deferredVisibleChapterUrl = null
+      expectedVisibleChapterUrl = url
+      nextChapterNavigationStarted = true
+      nextChapterNavigationWatchdogAttempt = 0
+      val serial = ++nextChapterNavigationWatchdogSerial
+      webView.loadUrl(url)
+      scheduleNextChapterNavigationWatchdog(url, serial)
+    }
+
+    private fun scheduleNextChapterNavigationWatchdog(
+      url: String,
+      serial: Int,
+    ) {
+      mainHandler.postDelayed({
+        if (
+          serial != nextChapterNavigationWatchdogSerial ||
+          !waitingForNextChapter ||
+          !sameViewerUrl(url, expectedVisibleChapterUrl)
+        ) {
+          return@postDelayed
+        }
+
+        if (visibleViewerReady || chapterBuildInProgress) return@postDelayed
+
+        if (nextChapterNavigationWatchdogAttempt >= 3) {
+          nextChapterNavigationStarted = false
+          requestNextChapter(0)
+          return@postDelayed
+        }
+
+        nextChapterNavigationWatchdogAttempt++
+        android.util.Log.w(
+          "NovelTTS",
+          "Viewer next-chapter load stalled; retry=${nextChapterNavigationWatchdogAttempt} url=$url",
+        )
+        webView.stopLoading()
+        webView.loadUrl(url)
+        scheduleNextChapterNavigationWatchdog(url, serial)
+      }, 6_000L)
     }
 
     private fun finishEpisode() {
@@ -2021,7 +2436,7 @@ class MainActivity : AppCompatActivity() {
         waitingForNextChapter = true
         nextChapterRetryCount = 0
         nextChapterNavigationStarted = false
-        pendingChapterFromUrl = webView.url
+        pendingChapterFromUrl = playbackChapterUrl ?: webView.url
         textToSpeech?.stop()
         syncPlaybackLocks()
         updatePlayButton()
@@ -2047,9 +2462,7 @@ class MainActivity : AppCompatActivity() {
           ?.takeIf(::isViewerUrl)
           ?.takeIf { !sameViewerUrl(it, currentUrl) }
       if (cached != null) {
-        nextChapterNavigationStarted = true
-        expectedVisibleChapterUrl = cached
-        webView.loadUrl(cached)
+        navigateToNextChapterWithWatchdog(cached)
         return
       }
 
@@ -2058,29 +2471,32 @@ class MainActivity : AppCompatActivity() {
           try {
             if (window.__npTts && typeof window.__npTts.nextChapterUrl === 'function') {
               var cached = window.__npTts.nextChapterUrl() || '';
-              if (cached) return cached;
+              if (cached) return new URL(cached, location.href).href;
+            }
+
+            var exact = document.getElementById('next_epi_auto_url');
+            if (exact && exact.value) return new URL(exact.value, location.href).href;
+
+            var nextNo = document.getElementById('content_no_next');
+            if (nextNo && nextNo.value && Number(nextNo.value) > 0) {
+              return new URL('/viewer/' + nextNo.value, location.origin).href;
+            }
+
+            var bottom = document.getElementById('next_epi_btn_bottom');
+            var rawOnclick = bottom ? (bottom.getAttribute('onclick') || '') : '';
+            var matched = rawOnclick.match(/check_next_episode_link\s*\(\s*['\"]?(\d+)/);
+            if (matched && matched[1]) {
+              return new URL('/viewer/' + matched[1], location.origin).href;
+            }
+
+            var anchors = document.querySelectorAll('a[href]');
+            for (var i = 0; i < anchors.length; i++) {
+              var txt = (anchors[i].textContent || '').replace(/\s/g, '');
+              if ((txt === '다음화' || txt === '다음화보기') && anchors[i].href) {
+                return anchors[i].href;
+              }
             }
           } catch (e) {}
-
-          var els = document.querySelectorAll('a,button,div,span,p,li');
-          for (var i = 0; i < els.length; i++) {
-            var raw = els[i].innerText || els[i].textContent || '';
-            var txt = raw.replace(/\s/g, '');
-            if (txt === '다음화보기' || txt === '다음화') {
-              var c = els[i].closest('a,button,li,div[class*="btn"]') || els[i];
-              var a = c.closest ? c.closest('a[href]') : null;
-              var href = a && a.href ? a.href : '';
-              if (href && href.indexOf('javascript:') !== 0) return href;
-              try { c.click(); return 'CLICKED'; } catch (e) { return ''; }
-            }
-          }
-          var fallback = document.querySelector('#novel_drawing_right, .btn-next-episode');
-          if (fallback) {
-            var a2 = fallback.closest ? fallback.closest('a[href]') : null;
-            var href2 = a2 && a2.href ? a2.href : '';
-            if (href2 && href2.indexOf('javascript:') !== 0) return href2;
-            try { fallback.click(); return 'CLICKED'; } catch (e) {}
-          }
           return '';
         })();
       """.trimIndent()
@@ -2096,13 +2512,24 @@ class MainActivity : AppCompatActivity() {
           if (value.isNotBlank() && value != "CLICKED") {
             if (!sameViewerUrl(value, currentUrl) && isViewerUrl(value)) {
               cachedNextChapterUrl = value
-              expectedVisibleChapterUrl = value
-              nextChapterNavigationStarted = true
-              webView.loadUrl(value)
+              navigateToNextChapterWithWatchdog(value)
               return@post
             }
           } else if (value == "CLICKED") {
             nextChapterNavigationStarted = true
+            val clickedFromUrl = currentUrl
+            val serial = ++nextChapterNavigationWatchdogSerial
+            mainHandler.postDelayed({
+              if (
+                serial != nextChapterNavigationWatchdogSerial ||
+                !waitingForNextChapter ||
+                !sameViewerUrl(webView.url, clickedFromUrl)
+              ) {
+                return@postDelayed
+              }
+              nextChapterNavigationStarted = false
+              requestNextChapter(attempt + 1)
+            }, 6_000L)
             return@post
           }
 

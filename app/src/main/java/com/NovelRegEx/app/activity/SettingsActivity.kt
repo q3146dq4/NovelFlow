@@ -59,7 +59,7 @@ class SettingsActivity : AppCompatActivity() {
       supportFragmentManager.beginTransaction().replace(R.id.settings_container, SettingsFragment()).commit()
     }
     supportActionBar?.setDisplayHomeAsUpEnabled(true)
-    title = getString(R.string.title_activity_settings)
+    title = "일반 설정"
   }
 
   override fun onSupportNavigateUp(): Boolean {
@@ -111,7 +111,6 @@ class SettingsActivity : AppCompatActivity() {
     ) {
       setPreferencesFromResource(R.xml.root_preferences, rootKey)
       setupStartPagePref()
-      setupTtsRollingPreQueuePref()
       setupLinkSettingsPref()
       setupFilterPrefs()
       setupSettingBackupPrefs()
@@ -129,27 +128,6 @@ class SettingsActivity : AppCompatActivity() {
         refreshStorageSummaries()
         refreshUpdatePrefs()
       }
-    }
-
-    private fun setupTtsRollingPreQueuePref() {
-      val chunkModePref = findPreference<ListPreference>(TtsPreferences.KEY_CHUNK_MODE) ?: return
-      val group = chunkModePref.parent ?: return
-      if (findPreference<ListPreference>(TtsPreferences.KEY_ROLLING_PREQUEUE_DEPTH) != null) return
-
-      val preQueuePref =
-        ListPreference(requireContext()).apply {
-          key = TtsPreferences.KEY_ROLLING_PREQUEUE_DEPTH
-          title = "TTS Rolling Pre-Queue"
-          entries = arrayOf("OFF", "2 chunks", "3 chunks (권장)", "4 chunks", "5 chunks")
-          entryValues = arrayOf("0", "2", "3", "4", "5")
-          setDefaultValue(TtsPreferences.DEFAULT_ROLLING_PREQUEUE_DEPTH.toString())
-          summaryProvider =
-            Preference.SummaryProvider<ListPreference> { pref ->
-              val selected = pref.entry?.toString() ?: "3 chunks (권장)"
-              "$selected · 현재 청크를 재생하는 동안 다음 TTS 청크를 미리 대기열에 넣어 청크 사이 묵음을 줄입니다."
-            }
-        }
-      group.addPreference(preQueuePref)
     }
 
     // region 시작 페이지
