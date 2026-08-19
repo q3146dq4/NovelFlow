@@ -102,6 +102,7 @@ dependencies {
   implementation(libs.androidx.swiperefreshlayout)
   implementation(libs.androidx.webkit)
   implementation(libs.material)
+  testImplementation("junit:junit:4.13.2")
 }
 
 val validateReleaseSigning =

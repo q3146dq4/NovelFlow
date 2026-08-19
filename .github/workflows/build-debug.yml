@@ -29,6 +29,16 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      - name: Check Kotlin style
+        continue-on-error: true
+        run: ./gradlew :app:ktlintCheck
+
+      - name: Run Android lint
+        run: ./gradlew :app:lintDebug
+
+      - name: Run unit tests
+        run: ./gradlew :app:testDebugUnitTest
+
       - name: Build debug APK
         run: ./gradlew :app:assembleDebug
 

@@ -29,6 +29,14 @@
 
     // 현재 화면 재수집 중인지
     refreshingLayout: false,
+
+    // Cached next chapter target collected with the chapter snapshot.
+    nextChapterUrl: "",
+
+    // DOM collection state. MutationObserver marks the snapshot dirty and
+    // performs one debounced rescan instead of Android polling collect() repeatedly.
+    dirty: true,
+    collectTimer: null,
   };
 
   function cleanText(text) {
@@ -132,7 +140,7 @@
     if (!text) return result;
 
     const regex =
-      /([.!?…]+["'”’」』)\]}]*)(\s+)(?=[A-Z가-힣0-9"“'‘「『])/g;
+      /([.!?…]+["'”’」』)\]}]*)(\s+)(?=[\p{L}\p{N}"“'‘「『])/gu;
 
     let lastIndex = 0;
     let match;
@@ -286,6 +294,7 @@
   function collect() {
     state.lines = [];
     state.sentences = [];
+    state.nextChapterUrl = "";
 
     const lineElements = getLineElements();
 
@@ -355,6 +364,45 @@
       }
     });
 
+    state.nextChapterUrl = findNextChapterUrl();
+    state.dirty = false;
+    return snapshot();
+  }
+
+  function findNextChapterUrl() {
+    try {
+      const selectors = [
+        "#novel_drawing_right",
+        "#next_epi_btn_bottom",
+        ".menu-next-item",
+        ".btn-next-episode",
+      ];
+
+      for (const selector of selectors) {
+        const element = document.querySelector(selector);
+        const anchor = element?.closest?.("a[href]");
+        const href = anchor?.href || "";
+        if (href && !href.startsWith("javascript:")) return href;
+      }
+
+      const elements = document.querySelectorAll("a,button,div,span,p,li");
+      for (const element of elements) {
+        const raw = element.innerText || element.textContent || "";
+        const value = raw.replace(/\s/g, "");
+        if (value !== "다음화보기" && value !== "다음화") continue;
+        const anchor = element.closest?.("a[href]");
+        const href = anchor?.href || "";
+        if (href && !href.startsWith("javascript:")) return href;
+      }
+    } catch (_) {}
+    return "";
+  }
+
+  function snapshot() {
+    if (state.dirty) {
+      return collect();
+    }
+
     const episodeTag =
       document
         .querySelector(".menu-top-tag")
@@ -369,26 +417,20 @@
       document.title ||
       "";
 
-    const numberMatch =
-      episodeTag.match(/\d+/);
-
-    const episodeNumber =
-      numberMatch
-        ? numberMatch[0]
-        : "0";
+    const numberMatch = episodeTag.match(/\d+/);
+    const episodeNumber = numberMatch ? numberMatch[0] : "0";
 
     return JSON.stringify({
       episode: `EP.${episodeNumber}`,
       title,
       lineCount: state.lines.length,
       sentenceCount: state.sentences.length,
-
-      sentences: state.sentences.map(
-        (item) => ({
-          line: item.line,
-          text: item.text,
-        })
-      ),
+      nextChapterUrl: state.nextChapterUrl || "",
+      sentences: state.sentences.map((item) => ({
+        line: item.line,
+        text: item.text,
+        commaParts: splitAtCommas(item.sourceText || item.text).map((part) => cleanText(part.text)),
+      })),
     });
   }
 
@@ -1029,6 +1071,28 @@
     collect,
 
     /*
+     * 이미 수집된 상태를 DOM 재스캔 없이 직렬화한다.
+     */
+    snapshot,
+
+    /*
+     * Android preload poll용 가벼운 준비 상태 확인.
+     */
+    isReady() {
+      return state.sentences.length > 0 && !state.dirty;
+    },
+
+    /*
+     * collect()에서 캐시한 다음 화 URL. 없을 때만 다시 탐색한다.
+     */
+    nextChapterUrl() {
+      if (!state.nextChapterUrl) {
+        state.nextChapterUrl = findNextChapterUrl();
+      }
+      return state.nextChapterUrl || "";
+    },
+
+    /*
      * 특정 문장을 highlight한다.
      */
     highlight,
@@ -1183,21 +1247,18 @@
               return;
             }
 
-            /*
-             * 최초 페이지 로딩 등으로
-             * 문장 배열이 아직 비어 있으면 수집한다.
-             *
-             * 회전으로 DOM이 교체된 경우에는
-             * resize/orientationchange에서
-             * refreshAfterLayoutChange()가 호출된다.
-             */
-            if (
-              state.sentences.length === 0
-            ) {
+            state.dirty = true;
+
+            if (state.collectTimer) {
+              clearTimeout(state.collectTimer);
+            }
+
+            state.collectTimer = setTimeout(() => {
+              state.collectTimer = null;
               try {
                 collect();
               } catch (_) {}
-            }
+            }, 120);
           }
         );
 
@@ -1205,6 +1266,7 @@
         observerRoot,
         {
           childList: true,
+          characterData: true,
           subtree: true,
         }
       );

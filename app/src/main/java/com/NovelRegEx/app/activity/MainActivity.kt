@@ -21,6 +21,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.provider.Settings
 import android.net.wifi.WifiManager
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
@@ -31,6 +32,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -46,6 +48,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.TooltipCompat
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
@@ -57,6 +60,8 @@ import com.NovelRegEx.app.R
 import com.NovelRegEx.app.filter.FilterPreferences
 import com.NovelRegEx.app.filter.FilterRuntime
 import com.NovelRegEx.app.layout.TopSwipeRefreshLayout
+import com.NovelRegEx.app.tts.TtsChunkBuilder
+import com.NovelRegEx.app.tts.TtsChunkSourceSentence
 import com.NovelRegEx.app.tts.TtsPreferences
 import com.NovelRegEx.app.tts.TtsRegexEngine
 import com.NovelRegEx.app.tts.TtsRegexStore
@@ -145,7 +150,18 @@ class MainActivity : AppCompatActivity() {
     }.getOrDefault(false)
   }
 
-  private data class TtsSentence(val line: Int, val text: String)
+  private data class TtsSentence(
+    val line: Int,
+    val text: String,
+    val commaParts: List<String> = emptyList(),
+  )
+
+  private data class CollectedTtsChapter(
+    val episode: String,
+    val title: String,
+    val nextChapterUrl: String?,
+    val sentences: List<TtsSentence>,
+  )
 
   private data class TtsStartAnchor(
     val text: String,
@@ -236,13 +252,22 @@ class MainActivity : AppCompatActivity() {
       addAction("ACTION_PREV")
     }
     
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-      registerReceiver(ttsControlReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-      if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-          requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
-      }
-    } else {
-      registerReceiver(ttsControlReceiver, filter)
+    ContextCompat.registerReceiver(
+      this,
+      ttsControlReceiver,
+      filter,
+      ContextCompat.RECEIVER_NOT_EXPORTED,
+    )
+
+    if (
+      Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+      checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+        android.content.pm.PackageManager.PERMISSION_GRANTED
+    ) {
+      requestPermissions(
+        arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+        101,
+      )
     }
 
     if (savedInstanceState != null) {
@@ -273,10 +298,6 @@ class MainActivity : AppCompatActivity() {
     webView.settings.apply {
       javaScriptEnabled = true
       domStorageEnabled = true
-    }
-
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_BOUND, true)
     }
 
     webView.addJavascriptInterface(ScrollRestoreInterface(), "_ScrollRestore")
@@ -328,6 +349,17 @@ class MainActivity : AppCompatActivity() {
         }
         startActivity(Intent(Intent.ACTION_VIEW, uri))
         return true
+      }
+
+      override fun onReceivedError(
+        view: WebView,
+        request: WebResourceRequest,
+        error: WebResourceError,
+      ) {
+        super.onReceivedError(view, request, error)
+        if (request.isForMainFrame) {
+          ttsController.onViewerMainFrameError(request.url.toString())
+        }
       }
 
       override fun onPageFinished(view: WebView, url: String?) {
@@ -432,15 +464,24 @@ class MainActivity : AppCompatActivity() {
     preloadWebView.settings.javaScriptEnabled = true
     preloadWebView.settings.domStorageEnabled = true
     preloadWebView.settings.loadsImagesAutomatically = false
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      preloadWebView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_BOUND, true)
-    }
     preloadWebView.webChromeClient = WebChromeClient()
     preloadWebView.webViewClient = object : WebViewClient() {
       override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
         super.onPageStarted(view, url, favicon)
+        ttsController.markPreloadPageStarted(url)
         if (!isViewerUrl(url)) {
           ttsController.clearPreloadedChapter()
+        }
+      }
+
+      override fun onReceivedError(
+        view: WebView,
+        request: WebResourceRequest,
+        error: WebResourceError,
+      ) {
+        super.onReceivedError(view, request, error)
+        if (request.isForMainFrame) {
+          ttsController.onPreloadMainFrameError(request.url.toString())
         }
       }
 
@@ -668,6 +709,7 @@ class MainActivity : AppCompatActivity() {
     keepWebViewTimersRunning()
     if (::preloadWebView.isInitialized) preloadWebView.onResume()
     ttsController.refreshCompiledTtsRules()
+    ttsController.refreshSystemTtsEngineIfChanged()
     val prefs = PreferenceManager.getDefaultSharedPreferences(this)
     swipeRefresh.triggerFraction = prefs.getString("swipe_fraction", null)?.toFloatOrNull() ?: TopSwipeRefreshLayout.DEFAULT_TRIGGER_FRACTION
   }
@@ -713,11 +755,18 @@ class MainActivity : AppCompatActivity() {
     view.evaluateJavascript("window.__NovelRegExRefreshCosmetic&&window.__NovelRegExRefreshCosmetic();", null)
   }
 
-  inner class NovelTtsController : UtteranceProgressListener(), TextToSpeech.OnInitListener {
+  inner class NovelTtsController : UtteranceProgressListener() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var textToSpeech: TextToSpeech? = null
     private var ttsReady = false
     private var startPending = false
+    private var ttsInitSerial = 0
+    private var boundTtsEngine: String? = null
+    private var requestedTtsEngine: String? = null
+    private var resumeAfterEngineReinit = false
+    private var engineReinitChunkIndex = -1
+    private var chunkBuildSerial = 0
+    private var chapterBuildInProgress = false
     
     private val sentences = mutableListOf<TtsSentence>()
     private val playbackChunks = mutableListOf<TtsSpeechChunk>()
@@ -756,11 +805,17 @@ class MainActivity : AppCompatActivity() {
     private var preloadedChapterUrl: String? = null
     private var preloadedChapterJson: String? = null
     private var preloadCollectRetry = 0
+    private var preloadPageRetryCount = 0
     private var preloadInFlight = false
+    private var cachedNextChapterUrl: String? = null
+    private var expectedVisibleChapterUrl: String? = null
+    private var failedVisibleChapterUrl: String? = null
+    private var failedPreloadChapterUrl: String? = null
+    private var visibleChapterLoadRetryCount = 0
+    private var visibleChapterRetryScheduled = false
 
     private var compiledTtsRules: List<TtsRegexEngine.CompiledRule> = emptyList()
     private var koreanNumberNormalizationEnabled = true
-    private val speakableContentRegex = Regex("[가-힣a-zA-Z0-9]")
 
     @Suppress("DEPRECATION")
     private val wifiLock: WifiManager.WifiLock =
@@ -780,7 +835,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun syncPlaybackLocks() {
       val shouldHoldCpu = active || waitingForNextChapter
-      val shouldHoldWifi = preloadInFlight || waitingForNextChapter
+      val shouldHoldWifi = active || preloadInFlight || waitingForNextChapter
 
       if (shouldHoldCpu) {
         if (!playbackWakeLock.isHeld) playbackWakeLock.acquire()
@@ -797,10 +852,10 @@ class MainActivity : AppCompatActivity() {
       } catch (_: Throwable) {}
     }
 
-    init { 
+    init {
       refreshCompiledTtsRules()
-      textToSpeech = TextToSpeech(this@MainActivity, this) 
-      
+      initializeTtsEngine()
+
       mediaSession = MediaSession(this@MainActivity, "NovelTtsSession").apply {
         setCallback(object : MediaSession.Callback() {
           override fun onPlay() { mainHandler.post { togglePlayPause() } }
@@ -812,51 +867,221 @@ class MainActivity : AppCompatActivity() {
       }
     }
 
-    override fun onInit(status: Int) {
-      mainHandler.post {
-        if (status != TextToSpeech.SUCCESS) {
+    @Suppress("DEPRECATION")
+    private fun readSystemDefaultTtsEngine(): String? =
+      Settings.Secure
+        .getString(contentResolver, Settings.Secure.TTS_DEFAULT_SYNTH)
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+
+    private fun initializeTtsEngine(enginePackage: String? = readSystemDefaultTtsEngine()) {
+      val serial = ++ttsInitSerial
+      requestedTtsEngine = enginePackage
+      ttsReady = false
+
+      val old = textToSpeech
+      textToSpeech = null
+      runCatching { old?.stop() }
+      runCatching { old?.shutdown() }
+
+      val listener =
+        TextToSpeech.OnInitListener { status ->
+          mainHandler.post { handleTtsInitialized(serial, status) }
+        }
+
+      textToSpeech =
+        if (enginePackage.isNullOrBlank()) {
+          TextToSpeech(this@MainActivity, listener)
+        } else {
+          TextToSpeech(this@MainActivity, listener, enginePackage)
+        }
+    }
+
+    private fun handleTtsInitialized(serial: Int, status: Int) {
+      if (serial != ttsInitSerial) return
+
+      if (status != TextToSpeech.SUCCESS) {
+        ttsReady = false
+        resumeAfterEngineReinit = false
+        if (active) {
+          active = false
+          paused = true
+          syncPlaybackLocks()
+          updatePlayButton()
+        }
+        Toast.makeText(this@MainActivity, "TTS 엔진을 초기화하지 못했습니다.", Toast.LENGTH_LONG).show()
+        return
+      }
+
+      val tts = textToSpeech ?: return
+      val result = tts.setLanguage(Locale.KOREAN)
+      if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+        val fallback = tts.setLanguage(Locale.KOREA)
+        if (fallback == TextToSpeech.LANG_MISSING_DATA || fallback == TextToSpeech.LANG_NOT_SUPPORTED) {
           ttsReady = false
-          Toast.makeText(this@MainActivity, "기본 TTS 엔진을 초기화하지 못했습니다.", Toast.LENGTH_LONG).show()
-          return@post
-        }
-        val result = textToSpeech?.setLanguage(Locale.KOREAN) ?: TextToSpeech.ERROR
-        if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-          val fallback = textToSpeech?.setLanguage(Locale.KOREA) ?: TextToSpeech.ERROR
-          if (fallback == TextToSpeech.LANG_MISSING_DATA || fallback == TextToSpeech.LANG_NOT_SUPPORTED) {
-            ttsReady = false
-            Toast.makeText(this@MainActivity, "한국어 TTS 데이터가 설치되어 있지 않습니다.", Toast.LENGTH_LONG).show()
-            return@post
+          resumeAfterEngineReinit = false
+          if (active) {
+            active = false
+            paused = true
+            syncPlaybackLocks()
+            updatePlayButton()
           }
+          Toast.makeText(this@MainActivity, "한국어 TTS 데이터가 설치되어 있지 않습니다.", Toast.LENGTH_LONG).show()
+          return
         }
-        textToSpeech?.setOnUtteranceProgressListener(this)
-        ttsReady = true
-        if (startPending) { startPending = false; openAndStart() }
+      }
+
+      tts.setOnUtteranceProgressListener(this)
+      tts.setSpeechRate(speed)
+      boundTtsEngine = tts.defaultEngine ?: requestedTtsEngine
+      requestedTtsEngine = null
+      ttsReady = true
+
+      if (resumeAfterEngineReinit) {
+        val shouldResume = active && !paused
+        resumeAfterEngineReinit = false
+        val index = engineReinitChunkIndex
+        engineReinitChunkIndex = -1
+        if (shouldResume && index in playbackChunks.indices) {
+          currentChunkIndex = index
+          val chunk = playbackChunks[index]
+          currentSentenceIndex = chunk.startSentenceIndex
+          currentSentencePartIndex = chunk.commaPartIndex ?: 0
+          syncPlaybackLocks()
+          speakCurrent()
+          updatePlayButton()
+          return
+        }
+      }
+
+      if (startPending) {
+        startPending = false
+        openAndStart()
       }
     }
 
+    fun refreshSystemTtsEngineIfChanged() {
+      val systemEngine = readSystemDefaultTtsEngine() ?: return
+      val currentEngine = boundTtsEngine ?: textToSpeech?.defaultEngine ?: requestedTtsEngine
+      if (systemEngine == currentEngine) return
+      if (!ttsReady && systemEngine == requestedTtsEngine) return
+
+      val shouldResume = active && !paused && currentChunkIndex in playbackChunks.indices
+      engineReinitChunkIndex = if (shouldResume) currentChunkIndex else -1
+      resumeAfterEngineReinit = shouldResume
+
+      // Ignore stale callbacks/queued utterances from the old engine.
+      advanceGeneration()
+      initializeTtsEngine(systemEngine)
+    }
+
     fun markPageStarted(url: String?) {
+      if (!url.isNullOrBlank() && sameViewerUrl(url, failedVisibleChapterUrl)) {
+        failedVisibleChapterUrl = null
+      }
       if (!waitingForNextChapter) return
-      if (!url.isNullOrBlank() && url != pendingChapterFromUrl) {
+      if (!url.isNullOrBlank() && !sameViewerUrl(url, pendingChapterFromUrl)) {
         nextChapterNavigationStarted = true
+        expectedVisibleChapterUrl = url
+      }
+    }
+
+    fun markPreloadPageStarted(url: String?) {
+      if (!url.isNullOrBlank() && sameViewerUrl(url, failedPreloadChapterUrl)) {
+        failedPreloadChapterUrl = null
       }
     }
 
     fun onViewerPageReady() {
       if (!currentPageIsViewer) return
+      if (sameViewerUrl(webView.url, failedVisibleChapterUrl)) return
+
+      visibleChapterLoadRetryCount = 0
+      visibleChapterRetryScheduled = false
+      val visibleUrl = webView.url
+      if (
+        !visibleUrl.isNullOrBlank() &&
+        !expectedVisibleChapterUrl.isNullOrBlank() &&
+        sameViewerUrl(visibleUrl, expectedVisibleChapterUrl)
+      ) {
+        expectedVisibleChapterUrl = null
+      }
+
       if (waitingForNextChapter) {
         if (tryStartFromPreloadedChapter()) return
+        if (chapterBuildInProgress) return
         retryCount = 0
         nextChapterNavigationStarted = false
         mainHandler.postDelayed({ collectAndStart(0, forNextChapter = true) }, 150L)
         return
       }
-      if (!active && sentences.isEmpty()) return
+
+      // Preloaded audio may start before the visible WebView finishes loading.
+      if (active && currentChunkIndex in playbackChunks.indices) {
+        if (activeChunk == null) activeChunk = playbackChunks[currentChunkIndex]
+        updateProgress(currentChunkIndex)
+        highlightCurrentChunk()
+      }
+    }
+
+    fun onViewerMainFrameError(url: String) {
+      if (!isViewerUrl(url)) return
+      if (!active && !waitingForNextChapter) return
+      failedVisibleChapterUrl = url
+      val expected = expectedVisibleChapterUrl ?: return
+      if (!sameViewerUrl(url, expected)) return
+      if (visibleChapterRetryScheduled) return
+
+      val attempt = visibleChapterLoadRetryCount++
+      val delayMs = minOf(4_000L, 500L * (1L shl attempt.coerceAtMost(3)))
+      visibleChapterRetryScheduled = true
+      mainHandler.postDelayed({
+        visibleChapterRetryScheduled = false
+        if ((!active && !waitingForNextChapter) || expectedVisibleChapterUrl == null) return@postDelayed
+        if (!sameViewerUrl(url, expectedVisibleChapterUrl)) return@postDelayed
+        webView.stopLoading()
+        webView.loadUrl(url)
+      }, delayMs)
+    }
+
+    fun onPreloadMainFrameError(url: String) {
+      if (!preloadInFlight || !isViewerUrl(url)) return
+      failedPreloadChapterUrl = url
+      val target = preloadedChapterUrl ?: return
+      if (!sameViewerUrl(url, target)) return
+
+      if (preloadPageRetryCount < 3) {
+        val attempt = ++preloadPageRetryCount
+        mainHandler.postDelayed({
+          if (preloadInFlight && sameViewerUrl(preloadedChapterUrl, target)) {
+            preloadWebView.stopLoading()
+            preloadWebView.loadUrl(target)
+          }
+        }, 600L * attempt)
+      } else {
+        preloadInFlight = false
+        preloadedChapterJson = null
+        syncPlaybackLocks()
+      }
+    }
+
+    private fun sameViewerUrl(first: String?, second: String?): Boolean {
+      if (first.isNullOrBlank() || second.isNullOrBlank()) return false
+      return runCatching {
+        val a = android.net.Uri.parse(first)
+        val b = android.net.Uri.parse(second)
+        a.scheme.equals(b.scheme, ignoreCase = true) &&
+          a.host.equals(b.host, ignoreCase = true) &&
+          a.path.orEmpty().trimEnd('/') == b.path.orEmpty().trimEnd('/')
+      }.getOrDefault(false)
     }
 
     private fun clearPreloadState() {
       preloadedChapterUrl = null
       preloadedChapterJson = null
       preloadCollectRetry = 0
+      preloadPageRetryCount = 0
+      failedPreloadChapterUrl = null
       preloadInFlight = false
     }
 
@@ -867,71 +1092,101 @@ class MainActivity : AppCompatActivity() {
 
     fun prepareNextChapterPreload() {
       if (!bingeMode || !currentPageIsViewer || preloadInFlight || preloadedChapterJson != null) return
-      val script = """
-        (function(){
-          var els = document.querySelectorAll('a,button,div,span,p,li');
-          for(var i=0;i<els.length;i++){
-            var raw = els[i].innerText || els[i].textContent || '';
-            var txt = raw.replace(/\s/g,'');
-            if(txt === '다음화보기' || txt === '다음화'){
-              var a = els[i].closest && els[i].closest('a[href]');
-              var h = a && a.href ? a.href : '';
-              if(h && h.indexOf('javascript:') !== 0) return h;
-            }
-          }
-          var f = document.querySelector('#novel_drawing_right, #next_epi_btn_bottom, .menu-next-item, .btn-next-episode');
-          var a2 = f && f.closest ? f.closest('a[href]') : null;
-          var h2 = a2 && a2.href ? a2.href : '';
-          return h2;
-        })();
-      """.trimIndent()
-      webView.evaluateJavascript(script) { result ->
+
+      val cached =
+        cachedNextChapterUrl
+          ?.takeIf(::isViewerUrl)
+          ?.takeIf { !sameViewerUrl(it, webView.url) }
+      if (cached != null) {
+        startNextChapterPreload(cached)
+        return
+      }
+
+      webView.evaluateJavascript(
+        "window.__npTts&&window.__npTts.nextChapterUrl?window.__npTts.nextChapterUrl():''",
+      ) { result ->
         mainHandler.post {
-          val url = runCatching { JSONTokener(result ?: "\"\"").nextValue() as? String }.getOrNull().orEmpty()
-          if (url.isBlank() || !isViewerUrl(url)) return@post
-          if (url == webView.url) return@post
-          preloadInFlight = true
-          syncPlaybackLocks()
-          preloadedChapterUrl = url
-          preloadedChapterJson = null
-          preloadCollectRetry = 0
-          preloadWebView.loadUrl(url)
+          val url =
+            runCatching { JSONTokener(result ?: "\"\"").nextValue() as? String }
+              .getOrNull()
+              .orEmpty()
+          if (url.isBlank() || !isViewerUrl(url) || sameViewerUrl(url, webView.url)) return@post
+          cachedNextChapterUrl = url
+          startNextChapterPreload(url)
         }
       }
     }
 
-    fun onPreloadPageFinished(url: String) {
-      if (!preloadInFlight || url != preloadedChapterUrl) return
+    private fun startNextChapterPreload(url: String) {
+      if (!bingeMode || !isViewerUrl(url) || sameViewerUrl(url, webView.url)) return
+      if (preloadInFlight && sameViewerUrl(preloadedChapterUrl, url)) return
+
+      preloadInFlight = true
+      preloadedChapterUrl = url
+      preloadedChapterJson = null
       preloadCollectRetry = 0
-      mainHandler.postDelayed({ tryCollectPreloadedChapter() }, 200L)
+      preloadPageRetryCount = 0
+      syncPlaybackLocks()
+      preloadWebView.loadUrl(url)
+    }
+
+    fun onPreloadPageFinished(url: String) {
+      if (!preloadInFlight || !sameViewerUrl(url, preloadedChapterUrl)) return
+      if (sameViewerUrl(url, failedPreloadChapterUrl)) return
+      preloadCollectRetry = 0
+      preloadPageRetryCount = 0
+      mainHandler.postDelayed({ tryCollectPreloadedChapter() }, 120L)
     }
 
     private fun tryCollectPreloadedChapter() {
       if (!preloadInFlight || preloadedChapterUrl.isNullOrBlank()) return
-      preloadWebView.evaluateJavascript("window.__npTts&&window.__npTts.collect()") { result ->
+
+      preloadWebView.evaluateJavascript(
+        "window.__npTts&&window.__npTts.isReady&&window.__npTts.isReady()",
+      ) { readyResult ->
         mainHandler.post {
-          val decoded = runCatching { JSONTokener(result ?: "\"\"").nextValue() as? String }.getOrNull().orEmpty()
-          if (decoded.isNotBlank() && decoded != "null") {
-            val root = runCatching { org.json.JSONObject(decoded) }.getOrNull()
-            val count = root?.optJSONArray("sentences")?.length() ?: 0
-            if (count > 0) {
-              preloadedChapterJson = decoded
-              preloadInFlight = false
-              syncPlaybackLocks()
-              if (waitingForNextChapter) {
-                mainHandler.post { tryStartFromPreloadedChapter() }
+          if (!preloadInFlight) return@post
+          if (readyResult != "true") {
+            schedulePreloadCollectRetry()
+            return@post
+          }
+
+          preloadWebView.evaluateJavascript(
+            "window.__npTts&&window.__npTts.snapshot&&window.__npTts.snapshot()",
+          ) { result ->
+            mainHandler.post {
+              if (!preloadInFlight) return@post
+              val decoded =
+                runCatching { JSONTokener(result ?: "\"\"").nextValue() as? String }
+                  .getOrNull()
+                  .orEmpty()
+              val count =
+                runCatching { org.json.JSONObject(decoded).optJSONArray("sentences")?.length() ?: 0 }
+                  .getOrDefault(0)
+
+              if (decoded.isNotBlank() && count > 0) {
+                preloadedChapterJson = decoded
+                preloadInFlight = false
+                syncPlaybackLocks()
+                if (waitingForNextChapter) mainHandler.post { tryStartFromPreloadedChapter() }
+                return@post
               }
-              return@post
+              schedulePreloadCollectRetry()
             }
           }
-          if (preloadCollectRetry < 80) {
-            preloadCollectRetry++
-            mainHandler.postDelayed({ tryCollectPreloadedChapter() }, 250L)
-          } else {
-            preloadInFlight = false
-            syncPlaybackLocks()
-          }
         }
+      }
+    }
+
+    private fun schedulePreloadCollectRetry() {
+      if (!preloadInFlight) return
+      if (preloadCollectRetry < 80) {
+        preloadCollectRetry++
+        mainHandler.postDelayed({ tryCollectPreloadedChapter() }, 250L)
+      } else {
+        preloadInFlight = false
+        preloadedChapterJson = null
+        syncPlaybackLocks()
       }
     }
 
@@ -939,52 +1194,195 @@ class MainActivity : AppCompatActivity() {
       val url = preloadedChapterUrl
       val json = preloadedChapterJson
       if (!waitingForNextChapter || url.isNullOrBlank() || json.isNullOrBlank()) return false
-      if (url == pendingChapterFromUrl) return false
-      waitingForNextChapter = false
-      nextChapterNavigationStarted = false
-      pendingChapterFromUrl = null
+      if (sameViewerUrl(url, pendingChapterFromUrl)) return false
+
+      expectedVisibleChapterUrl = url
+      nextChapterNavigationStarted = true
       preloadedChapterUrl = null
       preloadedChapterJson = null
       preloadInFlight = false
-      active = true
-      paused = false
+      preloadCollectRetry = 0
+      preloadPageRetryCount = 0
       syncPlaybackLocks()
+
       webView.loadUrl(url)
-      applyCollectedJsonAndStart(json, true)
-      mainHandler.postDelayed({ prepareNextChapterPreload() }, 1500L)
+      startCollectedChapterAsync(
+        decoded = json,
+        forNextChapter = true,
+        startAnchor = null,
+        onFailure = { if (waitingForNextChapter) requestNextChapter(0) },
+      )
       return true
     }
 
-    private fun applyCollectedJsonAndStart(decoded: String, forNextChapter: Boolean) {
-      try {
-        val root = org.json.JSONObject(decoded)
-        val title = root.optString("title").trim()
-        val episode = root.optString("episode").trim()
-        titleText?.text = buildString {
-          if (episode.isNotEmpty()) append(episode)
-          if (episode.isNotEmpty() && title.isNotEmpty()) append(' ')
-          if (title.isNotEmpty()) append(title)
-        }.ifBlank { webView.title.orEmpty() }
-        sentences.clear()
-        val list = root.optJSONArray("sentences") ?: JSONArray()
-        for (index in 0 until list.length()) {
-          val item = list.optJSONObject(index) ?: continue
-          val text = item.optString("text").trim()
-          if (text.isNotEmpty()) sentences.add(TtsSentence(line = item.optInt("line", 0), text = text))
+    private fun parseCollectedChapter(decoded: String): CollectedTtsChapter {
+      val root = org.json.JSONObject(decoded)
+      val parsedSentences = mutableListOf<TtsSentence>()
+      val list = root.optJSONArray("sentences") ?: JSONArray()
+
+      for (index in 0 until list.length()) {
+        val item = list.optJSONObject(index) ?: continue
+        val text = item.optString("text").trim()
+        if (text.isEmpty()) continue
+
+        val commaArray = item.optJSONArray("commaParts")
+        val commaParts =
+          buildList {
+            if (commaArray != null) {
+              for (partIndex in 0 until commaArray.length()) {
+                commaArray.optString(partIndex).trim().takeIf { it.isNotEmpty() }?.let(::add)
+              }
+            }
+          }.ifEmpty { listOf(text) }
+
+        parsedSentences +=
+          TtsSentence(
+            line = item.optInt("line", 0),
+            text = text,
+            commaParts = commaParts,
+          )
+      }
+
+      return CollectedTtsChapter(
+        episode = root.optString("episode").trim(),
+        title = root.optString("title").trim(),
+        nextChapterUrl = root.optString("nextChapterUrl").trim().takeIf { it.isNotEmpty() },
+        sentences = parsedSentences,
+      )
+    }
+
+    private fun buildTtsChunks(
+      sourceSentences: List<TtsSentence>,
+      mode: String,
+      rules: List<TtsRegexEngine.CompiledRule>,
+      koreanNumberEnabled: Boolean,
+    ): List<TtsSpeechChunk> {
+      val built =
+        TtsChunkBuilder.build(
+          sentences =
+            sourceSentences.map { sentence ->
+              TtsChunkSourceSentence(
+                line = sentence.line,
+                text = sentence.text,
+                commaParts = sentence.commaParts,
+              )
+            },
+          mode = mode,
+          maxInputLength = TextToSpeech.getMaxSpeechInputLength(),
+          prepareText = { original ->
+            TtsRegexEngine.applyCompiled(
+              original = original,
+              rules = rules,
+              koreanNumberEnabled = koreanNumberEnabled,
+            )
+          },
+        )
+
+      return built.map { chunk ->
+        TtsSpeechChunk(
+          text = chunk.text,
+          startSentenceIndex = chunk.startSentenceIndex,
+          endSentenceIndexExclusive = chunk.endSentenceIndexExclusive,
+          parts =
+            chunk.parts.map { part ->
+              TtsChunkPart(
+                sentenceIndex = part.sentenceIndex,
+                start = part.start,
+                endExclusive = part.endExclusive,
+              )
+            },
+          commaPartIndex = chunk.commaPartIndex,
+        )
+      }
+    }
+
+    private fun startCollectedChapterAsync(
+      decoded: String,
+      forNextChapter: Boolean,
+      startAnchor: TtsStartAnchor?,
+      onFailure: () -> Unit = {},
+    ) {
+      val buildSerial = ++chunkBuildSerial
+      chapterBuildInProgress = true
+      val mode = TtsPreferences.getChunkMode(this@MainActivity)
+      val rulesSnapshot = compiledTtsRules.toList()
+      val koreanNumberSnapshot = koreanNumberNormalizationEnabled
+
+      lifecycleScope.launch {
+        val builtResult =
+          withContext(Dispatchers.Default) {
+            runCatching {
+              val chapter = parseCollectedChapter(decoded)
+              require(chapter.sentences.isNotEmpty()) { "No TTS sentences" }
+              val chunks =
+                buildTtsChunks(
+                  sourceSentences = chapter.sentences,
+                  mode = mode,
+                  rules = rulesSnapshot,
+                  koreanNumberEnabled = koreanNumberSnapshot,
+                )
+              require(chunks.isNotEmpty()) { "No TTS chunks" }
+              chapter to chunks
+            }
+          }
+
+        if (buildSerial != chunkBuildSerial) return@launch
+        val pair =
+          builtResult.getOrElse {
+            chapterBuildInProgress = false
+            onFailure()
+            return@launch
+          }
+        val chapter = pair.first
+        val chunks = pair.second
+
+        if (forNextChapter && !waitingForNextChapter) {
+          chapterBuildInProgress = false
+          return@launch
         }
-        if (sentences.isEmpty()) return
-        rebuildPlaybackChunks()
-        if (playbackChunks.isEmpty()) return
+        if (!forNextChapter && !currentPageIsViewer) {
+          chapterBuildInProgress = false
+          return@launch
+        }
+
+        chapterBuildInProgress = false
+        titleText?.text =
+          buildString {
+            if (chapter.episode.isNotEmpty()) append(chapter.episode)
+            if (chapter.episode.isNotEmpty() && chapter.title.isNotEmpty()) append(' ')
+            if (chapter.title.isNotEmpty()) append(chapter.title)
+          }.ifBlank { webView.title.orEmpty() }
+
+        sentences.clear()
+        sentences.addAll(chapter.sentences)
+        playbackChunks.clear()
+        playbackChunks.addAll(chunks)
+        cachedNextChapterUrl =
+          chapter.nextChapterUrl
+            ?.takeIf(::isViewerUrl)
+            ?.takeIf { !sameViewerUrl(it, webView.url) }
+
+        val initialChunkIndex = if (forNextChapter) 0 else resolveInitialChunkIndex(startAnchor)
         currentSentenceIndex = -1
-        currentChunkIndex = -1
+        currentChunkIndex = initialChunkIndex - 1
         currentSentencePartIndex = 0
         active = true
         paused = false
-        waitingForNextChapter = false
+
+        if (forNextChapter) {
+          waitingForNextChapter = false
+          nextChapterRetryCount = 0
+          pendingChapterFromUrl = null
+        } else {
+          waitingForNextChapter = false
+        }
+
+        syncPlaybackLocks()
         advanceGeneration()
         updatePlayButton()
         speakNext()
-      } catch (_: Throwable) {}
+        mainHandler.postDelayed({ prepareNextChapterPreload() }, 900L)
+      }
     }
 
     fun refreshCompiledTtsRules() {
@@ -1083,99 +1481,62 @@ class MainActivity : AppCompatActivity() {
       startAnchor: TtsStartAnchor? = null,
     ) {
       if (!currentPageIsViewer) return
-      webView.evaluateJavascript("window.__npTts&&window.__npTts.collect()") { result ->
+
+      webView.evaluateJavascript(
+        "window.__npTts&&window.__npTts.isReady&&window.__npTts.isReady()",
+      ) { readyResult ->
         mainHandler.post {
-          if (result.isNullOrBlank() || result == "null" || result == "\"\"") {
-            if (retry < 60) {
-              mainHandler.postDelayed({ collectAndStart(retry + 1, forNextChapter, startAnchor) }, 250L)
-            } else if (forNextChapter && waitingForNextChapter) {
-              webView.reload()
-              mainHandler.postDelayed({ collectAndStart(0, forNextChapter = true, startAnchor = null) }, 800L)
-            } else {
-              Toast.makeText(this@MainActivity, "회차 본문을 찾지 못했습니다.", Toast.LENGTH_LONG).show()
-            }
+          if (!currentPageIsViewer) return@post
+          if (readyResult != "true") {
+            retryCollectAndStart(retry, forNextChapter, startAnchor)
             return@post
           }
-          try {
-            val decoded = JSONTokener(result).nextValue() as? String
-            if (decoded.isNullOrBlank()) {
-              if (retry < 60) {
-                mainHandler.postDelayed({ collectAndStart(retry + 1, forNextChapter, startAnchor) }, 250L)
-              } else if (forNextChapter && waitingForNextChapter) {
-                webView.reload()
-                mainHandler.postDelayed({ collectAndStart(0, forNextChapter = true, startAnchor = null) }, 800L)
+
+          webView.evaluateJavascript(
+            "window.__npTts&&window.__npTts.snapshot&&window.__npTts.snapshot()",
+          ) { result ->
+            mainHandler.post {
+              if (!currentPageIsViewer) return@post
+              val decoded =
+                runCatching { JSONTokener(result ?: "\"\"").nextValue() as? String }
+                  .getOrNull()
+                  .orEmpty()
+              if (decoded.isBlank()) {
+                retryCollectAndStart(retry, forNextChapter, startAnchor)
+                return@post
               }
-              return@post
-            }
-            val root = org.json.JSONObject(decoded)
-            val title = root.optString("title").trim()
-            val episode = root.optString("episode").trim()
 
-            titleText?.text = buildString {
-              if (episode.isNotEmpty()) append(episode)
-              if (episode.isNotEmpty() && title.isNotEmpty()) append(' ')
-              if (title.isNotEmpty()) append(title)
-            }.ifBlank { webView.title.orEmpty() }
-
-            sentences.clear()
-            val list = root.optJSONArray("sentences") ?: JSONArray()
-            for (index in 0 until list.length()) {
-              val item = list.optJSONObject(index) ?: continue
-              val text = item.optString("text").trim()
-              if (text.isNotEmpty()) {
-                sentences.add(TtsSentence(line = item.optInt("line", 0), text = text))
-              }
-            }
-
-            if (sentences.isEmpty()) {
-              if (retry < 60) {
-                mainHandler.postDelayed({ collectAndStart(retry + 1, forNextChapter, startAnchor) }, 250L)
-              } else if (forNextChapter && waitingForNextChapter) {
-                webView.reload()
-                mainHandler.postDelayed({ collectAndStart(0, forNextChapter = true, startAnchor = null) }, 800L)
-              } else {
-                Toast.makeText(this@MainActivity, "읽을 수 있는 본문을 찾지 못했습니다.", Toast.LENGTH_LONG).show()
-              }
-              return@post
-            }
-
-            rebuildPlaybackChunks()
-            if (playbackChunks.isEmpty()) {
-              Toast.makeText(this@MainActivity, "읽을 수 있는 TTS 청크를 만들지 못했습니다.", Toast.LENGTH_LONG).show()
-              return@post
-            }
-
-            val initialChunkIndex =
-              if (forNextChapter) 0 else resolveInitialChunkIndex(startAnchor)
-            currentSentenceIndex = -1
-            currentChunkIndex = initialChunkIndex - 1
-            currentSentencePartIndex = 0
-            active = true
-            paused = false
-            if (forNextChapter) {
-              waitingForNextChapter = false
-              nextChapterRetryCount = 0
-              nextChapterNavigationStarted = false
-              pendingChapterFromUrl = null
-            } else {
-              waitingForNextChapter = false
-            }
-            syncPlaybackLocks()
-            advanceGeneration()
-            updatePlayButton()
-            speakNext()
-            mainHandler.postDelayed({ prepareNextChapterPreload() }, 1200L)
-          } catch (error: Exception) {
-            if (retry < 60) {
-              mainHandler.postDelayed({ collectAndStart(retry + 1, forNextChapter, startAnchor) }, 250L)
-            } else if (forNextChapter && waitingForNextChapter) {
-              webView.reload()
-              mainHandler.postDelayed({ collectAndStart(0, forNextChapter = true, startAnchor = null) }, 800L)
-            } else {
-              Toast.makeText(this@MainActivity, "TTS 본문 분석에 실패했습니다: ${error.message.orEmpty()}", Toast.LENGTH_LONG).show()
+              startCollectedChapterAsync(
+                decoded = decoded,
+                forNextChapter = forNextChapter,
+                startAnchor = startAnchor,
+                onFailure = { retryCollectAndStart(retry, forNextChapter, startAnchor) },
+              )
             }
           }
         }
+      }
+    }
+
+    private fun retryCollectAndStart(
+      retry: Int,
+      forNextChapter: Boolean,
+      startAnchor: TtsStartAnchor?,
+    ) {
+      if (retry < 60) {
+        mainHandler.postDelayed({
+          collectAndStart(retry + 1, forNextChapter, startAnchor)
+        }, 250L)
+        return
+      }
+
+      if (forNextChapter && waitingForNextChapter) {
+        webView.reload()
+        mainHandler.postDelayed({
+          collectAndStart(0, forNextChapter = true, startAnchor = null)
+        }, 800L)
+      } else {
+        Toast.makeText(this@MainActivity, "TTS 본문을 준비하지 못했습니다.", Toast.LENGTH_LONG).show()
       }
     }
 
@@ -1251,7 +1612,7 @@ class MainActivity : AppCompatActivity() {
       TtsPreferences.getRollingPrequeueDepth(this@MainActivity)
 
     fun speakNext(queueMode: Int = TextToSpeech.QUEUE_FLUSH) {
-      if (!active || paused) return
+      if (!active || paused || !ttsReady) return
       currentChunkIndex++
       if (currentChunkIndex >= playbackChunks.size) {
         finishEpisode()
@@ -1264,177 +1625,54 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Apply the enabled TTS-regex list from top to bottom.
-     * Pronunciation, units, fractions, decimals and whitespace normalization are
-     * all editable default user rules in TtsRegexStore; there is no hidden second pass.
+     * Pure Kotlin chunk builder. Normal chapter parsing/building happens on
+     * Dispatchers.Default; these helpers remain for retry/fallback paths.
      */
-    private fun prepareTtsText(original: String): String =
-      TtsRegexEngine.applyCompiled(
-        original = original,
-        rules = compiledTtsRules,
+    private fun buildChunksForMode(mode: String): List<TtsSpeechChunk> =
+      buildTtsChunks(
+        sourceSentences = sentences.toList(),
+        mode = mode,
+        rules = compiledTtsRules.toList(),
         koreanNumberEnabled = koreanNumberNormalizationEnabled,
       )
-
-    private fun hasSpeakableContent(text: String): Boolean =
-      speakableContentRegex.containsMatchIn(text)
-
-    private fun splitAtCommas(text: String): List<String> {
-      val result = mutableListOf<String>()
-      var start = 0
-
-      text.forEachIndexed { index, character ->
-        val isComma = character == ',' || character == '，' || character == '、'
-        val isNumberSeparator =
-          character == ',' &&
-            index > 0 &&
-            index + 1 < text.length &&
-            text[index - 1].isDigit() &&
-            text[index + 1].isDigit()
-
-        if (isComma && !isNumberSeparator) {
-          text.substring(start, index + 1).trim().takeIf { it.isNotEmpty() }?.let(result::add)
-          start = index + 1
-        }
-      }
-
-      text.substring(start).trim().takeIf { it.isNotEmpty() }?.let(result::add)
-      return result.ifEmpty { listOf(text) }
-    }
-
-    private fun buildCommaChunk(startSentenceIndex: Int, requestedPartIndex: Int): TtsSpeechChunk {
-      val commaParts = splitAtCommas(sentences[startSentenceIndex].text)
-      val partIndex = requestedPartIndex.coerceIn(0, commaParts.lastIndex)
-      val text = prepareTtsText(commaParts[partIndex])
-
-      return TtsSpeechChunk(
-        text = text,
-        startSentenceIndex = startSentenceIndex,
-        endSentenceIndexExclusive = startSentenceIndex + 1,
-        parts =
-          if (hasSpeakableContent(text)) {
-            listOf(TtsChunkPart(sentenceIndex = startSentenceIndex, start = 0, endExclusive = text.length))
-          } else {
-            emptyList()
-          },
-        commaPartIndex = partIndex,
-      )
-    }
-
-    private fun buildCombinedChunk(
-      startSentenceIndex: Int,
-      requestedEndSentenceIndexExclusive: Int,
-    ): TtsSpeechChunk {
-      val text = StringBuilder()
-      val parts = mutableListOf<TtsChunkPart>()
-      val maxInputLength = TextToSpeech.getMaxSpeechInputLength()
-      var endSentenceIndexExclusive = startSentenceIndex
-
-      for (sentenceIndex in startSentenceIndex until requestedEndSentenceIndexExclusive.coerceAtMost(sentences.size)) {
-        val prepared = prepareTtsText(sentences[sentenceIndex].text)
-
-        endSentenceIndexExclusive = sentenceIndex + 1
-        if (prepared.isBlank() || !hasSpeakableContent(prepared)) continue
-
-        val separatorLength = if (text.isEmpty()) 0 else 1
-        val candidateLength = text.length + separatorLength + prepared.length
-
-        // Android TTS 입력 한계를 넘지 않도록 설정한 문장 수보다 먼저 청크를 끝낸다.
-        // 단, 문장 하나 자체가 한계보다 긴 기존 콘텐츠는 임의로 잘라 읽지 않는다.
-        if (text.isNotEmpty() && candidateLength > maxInputLength) {
-          endSentenceIndexExclusive = sentenceIndex
-          break
-        }
-
-        if (separatorLength > 0) text.append(' ')
-        val partStart = text.length
-        text.append(prepared)
-        parts +=
-          TtsChunkPart(
-            sentenceIndex = sentenceIndex,
-            start = partStart,
-            endExclusive = text.length,
-          )
-      }
-
-      return TtsSpeechChunk(
-        text = text.toString(),
-        startSentenceIndex = parts.firstOrNull()?.sentenceIndex ?: startSentenceIndex,
-        endSentenceIndexExclusive = endSentenceIndexExclusive.coerceAtLeast(startSentenceIndex + 1),
-        parts = parts,
-      )
-    }
 
     private fun buildSpeechChunk(
       startSentenceIndex: Int,
       mode: String = TtsPreferences.getChunkMode(this@MainActivity),
     ): TtsSpeechChunk {
-      if (mode == TtsPreferences.CHUNK_MODE_COMMA) {
-        return buildCommaChunk(startSentenceIndex, currentSentencePartIndex)
-      }
-
-      val requestedEnd =
-        when (mode) {
-          TtsPreferences.CHUNK_MODE_SENTENCE -> startSentenceIndex + 1
-          TtsPreferences.CHUNK_MODE_PARAGRAPH -> {
-            val line = sentences[startSentenceIndex].line
-            var end = startSentenceIndex + 1
-            while (end < sentences.size && sentences[end].line == line) end++
-            end
+      val candidates = buildChunksForMode(mode)
+      val selected =
+        if (mode == TtsPreferences.CHUNK_MODE_COMMA) {
+          candidates.firstOrNull {
+            it.startSentenceIndex == startSentenceIndex &&
+              it.commaPartIndex == currentSentencePartIndex
           }
-          else -> startSentenceIndex + 1
+        } else {
+          candidates.firstOrNull {
+            startSentenceIndex >= it.startSentenceIndex &&
+              startSentenceIndex < it.endSentenceIndexExclusive
+          }
         }
 
-      return buildCombinedChunk(startSentenceIndex, requestedEnd)
+      return selected
+        ?: TtsSpeechChunk(
+          text = "",
+          startSentenceIndex = startSentenceIndex,
+          endSentenceIndexExclusive = (startSentenceIndex + 1).coerceAtMost(sentences.size),
+          parts = emptyList(),
+        )
     }
 
     private fun rebuildPlaybackChunks() {
       playbackChunks.clear()
-
-      when (TtsPreferences.getChunkMode(this@MainActivity)) {
-        TtsPreferences.CHUNK_MODE_COMMA -> {
-          sentences.indices.forEach { sentenceIndex ->
-            val commaParts = splitAtCommas(sentences[sentenceIndex].text)
-            commaParts.indices.forEach { partIndex ->
-              buildCommaChunk(sentenceIndex, partIndex)
-                .takeIf { it.text.isNotBlank() && it.parts.isNotEmpty() }
-                ?.let(playbackChunks::add)
-            }
-          }
-        }
-
-        TtsPreferences.CHUNK_MODE_PARAGRAPH -> {
-          var start = 0
-          while (start < sentences.size) {
-            val line = sentences[start].line
-            var lineEnd = start + 1
-            while (lineEnd < sentences.size && sentences[lineEnd].line == line) lineEnd++
-
-            var chunkStart = start
-            while (chunkStart < lineEnd) {
-              val chunk = buildCombinedChunk(chunkStart, lineEnd)
-              if (chunk.text.isNotBlank() && chunk.parts.isNotEmpty()) playbackChunks += chunk
-              val nextStart = chunk.endSentenceIndexExclusive.coerceAtLeast(chunkStart + 1)
-              chunkStart = nextStart
-            }
-            start = lineEnd
-          }
-        }
-
-        else -> {
-          sentences.indices.forEach { sentenceIndex ->
-            buildCombinedChunk(sentenceIndex, sentenceIndex + 1)
-              .takeIf { it.text.isNotBlank() && it.parts.isNotEmpty() }
-              ?.let(playbackChunks::add)
-          }
-        }
-      }
+      playbackChunks.addAll(buildChunksForMode(TtsPreferences.getChunkMode(this@MainActivity)))
     }
 
     private fun speakCurrent(
       modeOverride: String? = null,
       queueMode: Int = TextToSpeech.QUEUE_FLUSH,
     ) {
-      if (!active || paused || currentChunkIndex !in playbackChunks.indices) return
+      if (!active || paused || !ttsReady || currentChunkIndex !in playbackChunks.indices) return
       syncPlaybackLocks()
 
       val chunkIndex = currentChunkIndex
@@ -1785,8 +2023,27 @@ class MainActivity : AppCompatActivity() {
       if (!waitingForNextChapter || !currentPageIsViewer || nextChapterNavigationStarted) return
       nextChapterRetryCount = attempt
       val currentUrl = pendingChapterFromUrl ?: webView.url
+
+      val cached =
+        cachedNextChapterUrl
+          ?.takeIf(::isViewerUrl)
+          ?.takeIf { !sameViewerUrl(it, currentUrl) }
+      if (cached != null) {
+        nextChapterNavigationStarted = true
+        expectedVisibleChapterUrl = cached
+        webView.loadUrl(cached)
+        return
+      }
+
       val nextScript = """
         (function() {
+          try {
+            if (window.__npTts && typeof window.__npTts.nextChapterUrl === 'function') {
+              var cached = window.__npTts.nextChapterUrl() || '';
+              if (cached) return cached;
+            }
+          } catch (e) {}
+
           var els = document.querySelectorAll('a,button,div,span,p,li');
           for (var i = 0; i < els.length; i++) {
             var raw = els[i].innerText || els[i].textContent || '';
@@ -1813,9 +2070,15 @@ class MainActivity : AppCompatActivity() {
       webView.evaluateJavascript(nextScript) { result ->
         mainHandler.post {
           if (!waitingForNextChapter) return@post
-          val value = runCatching { JSONTokener(result ?: "\"\"").nextValue() as? String }.getOrNull().orEmpty()
+          val value =
+            runCatching { JSONTokener(result ?: "\"\"").nextValue() as? String }
+              .getOrNull()
+              .orEmpty()
+
           if (value.isNotBlank() && value != "CLICKED") {
-            if (value != currentUrl && isViewerUrl(value)) {
+            if (!sameViewerUrl(value, currentUrl) && isViewerUrl(value)) {
+              cachedNextChapterUrl = value
+              expectedVisibleChapterUrl = value
               nextChapterNavigationStarted = true
               webView.loadUrl(value)
               return@post
@@ -2107,7 +2370,17 @@ class MainActivity : AppCompatActivity() {
 
     fun stop() {
       waitingForNextChapter = false
+      chunkBuildSerial++
+      chapterBuildInProgress = false
       clearPreloadState()
+      cachedNextChapterUrl = null
+      expectedVisibleChapterUrl = null
+      resumeAfterEngineReinit = false
+      engineReinitChunkIndex = -1
+      failedVisibleChapterUrl = null
+      failedPreloadChapterUrl = null
+      visibleChapterLoadRetryCount = 0
+      visibleChapterRetryScheduled = false
       active = false
       paused = false
       syncPlaybackLocks()
@@ -2126,6 +2399,9 @@ class MainActivity : AppCompatActivity() {
 
     fun destroy() {
       mainHandler.removeCallbacksAndMessages(null)
+      chunkBuildSerial++
+      chapterBuildInProgress = false
+      ttsInitSerial++
       textToSpeech?.stop()
       if (playbackWakeLock.isHeld) playbackWakeLock.release()
       try { if (wifiLock.isHeld) wifiLock.release() } catch (_: Throwable) {}
