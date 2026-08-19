@@ -1129,7 +1129,7 @@ class MainActivity : AppCompatActivity() {
 
       tts.setOnUtteranceProgressListener(this)
       tts.setSpeechRate(speed)
-      boundTtsEngine = tts.defaultEngine ?: requestedTtsEngine
+      boundTtsEngine = requestedTtsEngine ?: tts.defaultEngine
       requestedTtsEngine = null
       ttsReady = true
       engineRecoveryInProgress = false
@@ -1159,7 +1159,7 @@ class MainActivity : AppCompatActivity() {
 
     fun refreshSystemTtsEngineIfChanged() {
       val preferredEngine = readPreferredTtsEngine() ?: return
-      val currentEngine = boundTtsEngine ?: textToSpeech?.defaultEngine ?: requestedTtsEngine
+      val currentEngine = boundTtsEngine ?: requestedTtsEngine ?: textToSpeech?.defaultEngine
       if (preferredEngine == currentEngine) return
       if (!ttsReady && preferredEngine == requestedTtsEngine) return
 
