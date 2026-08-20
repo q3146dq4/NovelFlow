@@ -163,6 +163,7 @@ class MainActivity : AppCompatActivity() {
 
   private data class TtsSentence(
     val line: Int,
+    val paragraph: Int,
     val text: String,
     val commaParts: List<String> = emptyList(),
   )
@@ -245,7 +246,7 @@ class MainActivity : AppCompatActivity() {
     @JavascriptInterface
     fun onEpisodeRange(novelNo: String, currentEpisode: Int, latestEpisode: Int) {
       if (!novelNo.matches(Regex("""\d+"""))) return
-      if (currentEpisode <= 0 || latestEpisode <= 0) return
+      if (currentEpisode < 0 || latestEpisode < currentEpisode) return
       runOnUiThread {
         if (isViewerUrl(webView.url)) {
           ttsController.updateEpisodeRange(novelNo, currentEpisode, latestEpisode)
@@ -996,8 +997,8 @@ class MainActivity : AppCompatActivity() {
     private var bingeMode = true
 
     private var currentNovelNo = ""
-    private var currentEpisodeNumber = 0
-    private var latestEpisodeNumber = 0
+    private var currentEpisodeNumber = -1
+    private var latestEpisodeNumber = -1
     private var stopEpisodeEnabled = false
     private var stopEpisodeTarget = 0
     private var sleepTimerDeadline = 0L
@@ -1650,9 +1651,11 @@ class MainActivity : AppCompatActivity() {
             }
           }.ifEmpty { listOf(text) }
 
+        val line = item.optInt("line", 0)
         parsedSentences +=
           TtsSentence(
-            line = item.optInt("line", 0),
+            line = line,
+            paragraph = item.optInt("paragraph", line),
             text = text,
             commaParts = commaParts,
           )
@@ -1681,6 +1684,7 @@ class MainActivity : AppCompatActivity() {
             sourceSentences.map { sentence ->
               TtsChunkSourceSentence(
                 line = sentence.line,
+                paragraph = sentence.paragraph,
                 text = sentence.text,
                 commaParts = sentence.commaParts,
               )
@@ -1780,10 +1784,15 @@ class MainActivity : AppCompatActivity() {
 
         if (chapter.novelNo.matches(Regex("[0-9]+")) && chapter.novelNo != currentNovelNo) {
           currentNovelNo = chapter.novelNo
+          currentEpisodeNumber = -1
+          latestEpisodeNumber = -1
           refreshCompiledTtsRules()
         }
-        if (chapter.episodeNumber > 0) currentEpisodeNumber = chapter.episodeNumber
-        requestEpisodeRange()
+        if (chapter.episodeNumber >= 0) currentEpisodeNumber = chapter.episodeNumber
+        requestEpisodeRange(
+          novelNoHint = chapter.novelNo.takeIf { it.matches(Regex("[0-9]+")) },
+          currentEpisodeHint = chapter.episodeNumber.takeIf { it >= 0 },
+        )
 
         sentences.clear()
         sentences.addAll(chapter.sentences)
@@ -2842,18 +2851,40 @@ class MainActivity : AppCompatActivity() {
       ).show()
     }
 
-    private fun requestEpisodeRange() {
+    private fun requestEpisodeRange(
+      novelNoHint: String? = currentNovelNo.takeIf { it.matches(Regex("[0-9]+")) },
+      currentEpisodeHint: Int? = currentEpisodeNumber.takeIf { it >= 0 },
+    ) {
       if (!currentPageIsViewer) return
+
+      val hintedNovelJson = org.json.JSONObject.quote(novelNoHint.orEmpty())
+      val hintedCurrent = currentEpisodeHint ?: -1
+      val knownLatest =
+        if (novelNoHint != null && novelNoHint == currentNovelNo) latestEpisodeNumber
+        else -1
 
       val js =
         """
         (async function() {
           try {
-            var novelNo = (document.getElementById('novel_no') || {}).value || '';
+            var hintedNovelNo = $hintedNovelJson;
+            var hintedCurrent = $hintedCurrent;
+            var knownLatest = $knownLatest;
+
+            var domNovelNo = (document.getElementById('novel_no') || {}).value || '';
+            var novelNo = /^\d+$/.test(String(hintedNovelNo || ''))
+              ? String(hintedNovelNo)
+              : String(domNovelNo || '');
+
             var epText = (document.querySelector('.menu-top-tag') || {}).textContent || '';
             var currentMatch = epText.match(/EP\.\s*(\d+)/i) || epText.match(/(\d+)/);
-            var current = currentMatch ? Number(currentMatch[1]) : 0;
-            if (!novelNo || !current) return;
+            var domCurrent = currentMatch ? Number(currentMatch[1]) : -1;
+            var current =
+              Number.isInteger(hintedCurrent) && hintedCurrent >= 0
+                ? hintedCurrent
+                : domCurrent;
+
+            if (!novelNo || current < 0) return;
 
             var latestFromList = 0;
             var latestFromSummary = 0;
@@ -2945,10 +2976,15 @@ class MainActivity : AppCompatActivity() {
               }
             } catch (_) {}
 
-            var latest = Math.max(current, latestFromList, latestFromSummary);
+            var latest = Math.max(
+              current,
+              Number.isInteger(knownLatest) ? knownLatest : -1,
+              latestFromList,
+              latestFromSummary
+            );
 
             if (
-              latest > 0 &&
+              latest >= current &&
               window._NPTTS &&
               typeof window._NPTTS.onEpisodeRange === 'function'
             ) {
@@ -2962,9 +2998,26 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun updateEpisodeRange(novelNo: String, currentEpisode: Int, latestEpisode: Int) {
-      currentNovelNo = novelNo
+      val sameNovel = currentNovelNo == novelNo
+
+      if (
+        sameNovel &&
+        currentEpisodeNumber >= 0 &&
+        currentEpisode != currentEpisodeNumber &&
+        (active || waitingForNextChapter || chapterBuildInProgress)
+      ) {
+        latestEpisodeNumber = maxOf(latestEpisodeNumber, latestEpisode)
+        updateAutomationLabels()
+        return
+      }
+
+      if (!sameNovel) {
+        currentNovelNo = novelNo
+        latestEpisodeNumber = -1
+      }
+
       currentEpisodeNumber = currentEpisode
-      latestEpisodeNumber = latestEpisode
+      latestEpisodeNumber = maxOf(latestEpisodeNumber, latestEpisode, currentEpisode)
       updateAutomationLabels()
     }
 
@@ -2980,7 +3033,7 @@ class MainActivity : AppCompatActivity() {
       stopEpisodeText?.text =
         if (stopEpisodeEnabled && stopEpisodeTarget > 0) {
           "${stopEpisodeTarget}화까지"
-        } else if (currentEpisodeNumber > 0 && latestEpisodeNumber > 0) {
+        } else if (currentEpisodeNumber >= 0 && latestEpisodeNumber >= currentEpisodeNumber) {
           "${currentEpisodeNumber}/${latestEpisodeNumber}화"
         } else {
           "N화까지"
@@ -3049,7 +3102,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showStopEpisodeDialog() {
-      if (currentNovelNo.isBlank() || currentEpisodeNumber <= 0 || latestEpisodeNumber <= 0) {
+      if (currentNovelNo.isBlank() || currentEpisodeNumber < 0 || latestEpisodeNumber < currentEpisodeNumber) {
         requestEpisodeRange()
         Toast.makeText(
           this@MainActivity,
@@ -3059,10 +3112,20 @@ class MainActivity : AppCompatActivity() {
         return
       }
 
+      val minimumTargetEpisode = maxOf(1, currentEpisodeNumber)
+      if (latestEpisodeNumber < minimumTargetEpisode) {
+        Toast.makeText(
+          this@MainActivity,
+          "현재 지정할 수 있는 다음 회차가 없습니다.",
+          Toast.LENGTH_SHORT,
+        ).show()
+        return
+      }
+
       val saved =
         TtsPreferences
           .getStopEpisode(this@MainActivity, currentNovelNo)
-          .takeIf { it in currentEpisodeNumber..latestEpisodeNumber }
+          .takeIf { it in minimumTargetEpisode..latestEpisodeNumber }
           ?: latestEpisodeNumber
 
       val input =
@@ -3088,8 +3151,8 @@ class MainActivity : AppCompatActivity() {
       dialog.setOnShowListener {
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
           val target = input.text.toString().toIntOrNull()
-          if (target == null || target !in currentEpisodeNumber..latestEpisodeNumber) {
-            input.error = "${currentEpisodeNumber}~${latestEpisodeNumber} 사이로 입력하세요."
+          if (target == null || target !in minimumTargetEpisode..latestEpisodeNumber) {
+            input.error = "${minimumTargetEpisode}~${latestEpisodeNumber} 사이로 입력하세요."
             return@setOnClickListener
           }
           TtsPreferences.setStopEpisode(this@MainActivity, currentNovelNo, target)

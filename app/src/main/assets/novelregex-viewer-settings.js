@@ -12,6 +12,8 @@
 
   let current = null;
   let injectTimer = null;
+  const boundNovelTabs = new WeakSet();
+  const boundSiteTabs = new WeakSet();
 
   function siteNodes() {
     const themeBox = document.getElementById(SITE.themeBox);
@@ -431,15 +433,76 @@
     refresh();
   }
 
-  function inject() {
-    const existing = document.getElementById(TAB_ID);
-    if (existing?.isConnected && document.getElementById(PANEL_ID)?.isConnected) {
-      return true;
+  function fallbackShowSitePanel(which) {
+    const nodes = siteNodes();
+    if (!nodes) return;
+
+    const showNormal = which === "normal";
+    const targetPanel = showNormal ? nodes.normalPanel : nodes.advancedPanel;
+    const otherPanel = showNormal ? nodes.advancedPanel : nodes.normalPanel;
+
+    // Let Novelpia's own click handler run first. Repair only if the requested
+    // panel is still hidden after the click has propagated.
+    if (window.getComputedStyle(targetPanel).display === "none") {
+      targetPanel.style.display = "block";
+      otherPanel.style.display = "none";
+      nodes.normalTab.style.backgroundColor = showNormal ? "" : "rgba(0,0,0,0.2)";
+      nodes.advancedTab.style.backgroundColor = showNormal ? "rgba(0,0,0,0.2)" : "";
+    }
+  }
+
+  function bindTabHandlers() {
+    if (!current) return;
+
+    if (!boundNovelTabs.has(current.novelTab)) {
+      current.novelTab.addEventListener(
+        "click",
+        (event) => {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          showPanel();
+        },
+        true,
+      );
+      boundNovelTabs.add(current.novelTab);
     }
 
+    [
+      [current.normalTab, "normal"],
+      [current.advancedTab, "advanced"],
+    ].forEach(([tab, which]) => {
+      if (boundSiteTabs.has(tab)) return;
+      tab.addEventListener(
+        "click",
+        () => {
+          hidePanel();
+          window.requestAnimationFrame(() => fallbackShowSitePanel(which));
+        },
+        true,
+      );
+      boundSiteTabs.add(tab);
+    });
+  }
+
+  function inject() {
+    const existing = document.getElementById(TAB_ID);
+    const existingPanel = document.getElementById(PANEL_ID);
     const nodes = siteNodes();
     if (!nodes) return false;
     ensureStyle();
+
+    // Novelpia can rebuild the settings DOM. IDs may survive while
+    // addEventListener handlers do not, so always bind the current live nodes.
+    if (existing?.isConnected && existingPanel?.isConnected) {
+      current = {
+        ...nodes,
+        novelTab: existing,
+        panel: existingPanel,
+      };
+      bindTabHandlers();
+      syncPanelHeight();
+      return true;
+    }
 
     document.getElementById(TAB_ID)?.remove();
     document.getElementById(PANEL_ID)?.remove();
@@ -470,17 +533,7 @@
     };
     syncPanelHeight();
 
-    novelTab.addEventListener(
-      "click",
-      (event) => {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        showPanel();
-      },
-      true,
-    );
-    nodes.normalTab.addEventListener("click", hidePanel, true);
-    nodes.advancedTab.addEventListener("click", hidePanel, true);
+    bindTabHandlers();
     return true;
   }
 

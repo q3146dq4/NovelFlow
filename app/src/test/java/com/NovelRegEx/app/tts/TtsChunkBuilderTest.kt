@@ -79,6 +79,28 @@ class TtsChunkBuilderTest {
   }
 
   @Test
+  fun paragraphModeUsesLogicalParagraphInsteadOfDomLine() {
+    val sentences =
+      listOf(
+        TtsChunkSourceSentence(line = 7, paragraph = 10, text = "첫 문장."),
+        TtsChunkSourceSentence(line = 7, paragraph = 10, text = "같은 문단."),
+        TtsChunkSourceSentence(line = 7, paragraph = 11, text = "다음 문단."),
+      )
+
+    val chunks =
+      TtsChunkBuilder.build(
+        sentences = sentences,
+        mode = TtsPreferences.CHUNK_MODE_PARAGRAPH,
+        maxInputLength = 100,
+        prepareText = { it },
+      )
+
+    assertEquals(2, chunks.size)
+    assertEquals("첫 문장. 같은 문단.", chunks[0].text)
+    assertEquals("다음 문단.", chunks[1].text)
+  }
+
+  @Test
   fun hardSplitDoesNotCutEmojiSurrogatePair() {
     val source = "가".repeat(9) + "😀" + "나".repeat(9)
     val parts = TtsChunkBuilder.splitForInputLimit(source, 10)

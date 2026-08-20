@@ -2,6 +2,7 @@ package com.NovelRegEx.app.tts
 
 internal data class TtsChunkSourceSentence(
   val line: Int,
+  val paragraph: Int = line,
   val text: String,
   val commaParts: List<String> = emptyList(),
 )
@@ -107,9 +108,14 @@ internal object TtsChunkBuilder {
     var lineStart = 0
 
     while (lineStart < sentences.size) {
-      val line = sentences[lineStart].line
+      val paragraph = sentences[lineStart].paragraph
       var lineEnd = lineStart + 1
-      while (lineEnd < sentences.size && sentences[lineEnd].line == line) lineEnd++
+      while (
+        lineEnd < sentences.size &&
+        sentences[lineEnd].paragraph == paragraph
+      ) {
+        lineEnd++
+      }
 
       val text = StringBuilder()
       val parts = mutableListOf<TtsBuiltChunkPart>()

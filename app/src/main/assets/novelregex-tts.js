@@ -291,76 +291,146 @@
     );
   }
 
+  function isParagraphBoundaryElement(element, root) {
+    if (!element || element === root) return false;
+
+    const tag = String(element.tagName || "").toUpperCase();
+    if (
+      tag === "P" ||
+      tag === "DIV" ||
+      tag === "LI" ||
+      tag === "BLOCKQUOTE" ||
+      tag === "SECTION" ||
+      tag === "ARTICLE" ||
+      tag === "TABLE" ||
+      tag === "TR"
+    ) {
+      return true;
+    }
+
+    try {
+      const display = window.getComputedStyle(element).display || "";
+      return (
+        display === "block" ||
+        display === "list-item" ||
+        display === "table" ||
+        display === "table-row" ||
+        display === "flex" ||
+        display === "grid"
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function paragraphNodeGroups(root) {
+    const groups = [];
+    let current = [];
+
+    function flush() {
+      const hasText = current.some((node) => cleanText(node.nodeValue || ""));
+      if (hasText) groups.push(current.slice());
+      current = [];
+    }
+
+    function visit(node) {
+      if (!node) return;
+
+      if (node.nodeType === Node.TEXT_NODE) {
+        const parent = node.parentElement;
+        if (!parent || isElementHidden(parent)) return;
+        current.push(node);
+        return;
+      }
+
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+      const element = node;
+      if (isElementHidden(element)) return;
+
+      if (String(element.tagName || "").toUpperCase() === "BR") {
+        flush();
+        return;
+      }
+
+      const boundary = isParagraphBoundaryElement(element, root);
+      if (boundary) flush();
+
+      Array.from(element.childNodes || []).forEach(visit);
+
+      if (boundary) flush();
+    }
+
+    Array.from(root?.childNodes || []).forEach(visit);
+    flush();
+    return groups;
+  }
+
   function collect() {
     state.lines = [];
     state.sentences = [];
     state.nextChapterUrl = "";
 
     const lineElements = getLineElements();
+    let paragraphIndex = 0;
 
     lineElements.forEach((element, lineIndex) => {
-      const nodes = visibleTextNodes(element);
-
-      const rawText = nodes
+      const lineNodes = visibleTextNodes(element);
+      const lineRawText = lineNodes
         .map((node) => node.nodeValue || "")
         .join("");
+      const lineCleaned = cleanText(lineRawText);
 
-      const cleaned = cleanText(rawText);
-
-      const lineInfo = {
+      state.lines.push({
         index: lineIndex,
         element,
-        nodes,
-        text: cleaned,
-      };
+        nodes: lineNodes,
+        text: lineCleaned,
+      });
 
-      state.lines.push(lineInfo);
+      const paragraphGroups = paragraphNodeGroups(element);
 
       if (
+        paragraphGroups.length === 0 &&
         element.querySelector("img") &&
-        !cleaned
+        !lineCleaned
       ) {
         state.sentences.push({
           line: lineIndex,
+          paragraph: paragraphIndex++,
           text: "삽화가 있습니다.",
           start: null,
           end: null,
           sourceText: "",
           rawStart: null,
           rawEnd: null,
+          nodes: [],
         });
-
         return;
       }
 
-      if (!cleaned) return;
+      for (const groupNodes of paragraphGroups) {
+        const rawText = groupNodes.map((node) => node.nodeValue || "").join("");
+        if (!cleanText(rawText)) continue;
 
-      const parts = splitSentences(rawText);
+        const logicalParagraph = paragraphIndex++;
+        const parts = splitSentences(rawText);
 
-      for (const part of parts) {
-        const text = cleanText(part.text);
+        for (const part of parts) {
+          const text = cleanText(part.text);
+          if (!text) continue;
 
-        if (!text) continue;
-
-        const startBoundary = boundaryAt(
-          nodes,
-          part.start
-        );
-
-        const endBoundary = boundaryAt(
-          nodes,
-          part.end
-        );
-
-        state.sentences.push({
-          line: lineIndex,
-          text,
-          start: startBoundary,
-          end: endBoundary,
-          sourceText: part.text,
-          rawStart: part.start,
-          rawEnd: part.end,
-        });
+          state.sentences.push({
+            line: lineIndex,
+            paragraph: logicalParagraph,
+            text,
+            start: boundaryAt(groupNodes, part.start),
+            end: boundaryAt(groupNodes, part.end),
+            sourceText: part.text,
+            rawStart: part.start,
+            rawEnd: part.end,
+            nodes: groupNodes,
+          });
+        }
       }
     });
 
@@ -430,21 +500,24 @@
       document.title ||
       "";
 
-    const numberMatch = episodeTag.match(/\d+/);
-    const episodeNumber = numberMatch ? numberMatch[0] : "0";
+    const numberMatch =
+      episodeTag.match(/EP\.\s*(\d+)/i) ||
+      episodeTag.match(/(\d+)/);
+    const episodeNumber = numberMatch ? Number(numberMatch[1]) : -1;
 
     const novelNo = document.getElementById("novel_no")?.value || "";
 
     return JSON.stringify({
       novelNo,
-      episodeNumber: Number(episodeNumber) || 0,
-      episode: `EP.${episodeNumber}`,
+      episodeNumber,
+      episode: episodeNumber >= 0 ? `EP.${episodeNumber}` : episodeTag,
       title,
       lineCount: state.lines.length,
       sentenceCount: state.sentences.length,
       nextChapterUrl: state.nextChapterUrl || "",
       sentences: state.sentences.map((item) => ({
         line: item.line,
+        paragraph: item.paragraph,
         text: item.text,
         commaParts: splitAtCommas(item.sourceText || item.text).map((part) => cleanText(part.text)),
       })),
@@ -679,7 +752,7 @@
         first.sourceText || first.text
       );
       const commaPart = commaParts[safeCommaPart];
-      const nodes = state.lines[first.line]?.nodes;
+      const nodes = first.nodes || state.lines[first.line]?.nodes;
 
       if (commaPart && nodes) {
         startBoundary = boundaryAt(
