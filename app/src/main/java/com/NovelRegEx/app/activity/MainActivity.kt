@@ -13,6 +13,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.graphics.Color
+import android.graphics.Typeface
 import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
@@ -171,6 +172,7 @@ class MainActivity : AppCompatActivity() {
   private data class CollectedTtsChapter(
     val novelNo: String,
     val episodeNumber: Int,
+    val latestEpisodeNumber: Int,
     val episode: String,
     val title: String,
     val nextChapterUrl: String?,
@@ -999,6 +1001,8 @@ class MainActivity : AppCompatActivity() {
     private var currentNovelNo = ""
     private var currentEpisodeNumber = -1
     private var latestEpisodeNumber = -1
+    private val latestEpisodeByNovel = mutableMapOf<String, Int>()
+    private var pendingStopEpisodeDialog = false
     private var stopEpisodeEnabled = false
     private var stopEpisodeTarget = 0
     private var sleepTimerDeadline = 0L
@@ -1661,10 +1665,22 @@ class MainActivity : AppCompatActivity() {
           )
       }
 
+      val episodeText = root.optString("episode").trim()
+      val parsedEpisodeNumber =
+        root.optInt("episodeNumber", -1)
+          .takeIf { it >= 0 }
+          ?: Regex("""EP\.\s*(\d+)""", RegexOption.IGNORE_CASE)
+            .find(episodeText)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.toIntOrNull()
+          ?: -1
+
       return CollectedTtsChapter(
         novelNo = root.optString("novelNo").trim(),
-        episodeNumber = root.optInt("episodeNumber", 0),
-        episode = root.optString("episode").trim(),
+        episodeNumber = parsedEpisodeNumber,
+        latestEpisodeNumber = root.optInt("latestEpisode", -1),
+        episode = episodeText,
         title = root.optString("title").trim(),
         nextChapterUrl = root.optString("nextChapterUrl").trim().takeIf { it.isNotEmpty() },
         sentences = parsedSentences,
@@ -1785,10 +1801,28 @@ class MainActivity : AppCompatActivity() {
         if (chapter.novelNo.matches(Regex("[0-9]+")) && chapter.novelNo != currentNovelNo) {
           currentNovelNo = chapter.novelNo
           currentEpisodeNumber = -1
-          latestEpisodeNumber = -1
+          latestEpisodeNumber = latestEpisodeByNovel[chapter.novelNo] ?: -1
           refreshCompiledTtsRules()
         }
-        if (chapter.episodeNumber >= 0) currentEpisodeNumber = chapter.episodeNumber
+
+        if (chapter.episodeNumber >= 0) {
+          currentEpisodeNumber = chapter.episodeNumber
+        }
+        if (
+          chapter.latestEpisodeNumber >= 0 &&
+          chapter.latestEpisodeNumber >= currentEpisodeNumber
+        ) {
+          latestEpisodeNumber = maxOf(latestEpisodeNumber, chapter.latestEpisodeNumber)
+          if (currentNovelNo.isNotBlank()) {
+            latestEpisodeByNovel[currentNovelNo] =
+              maxOf(latestEpisodeByNovel[currentNovelNo] ?: -1, latestEpisodeNumber)
+          }
+        }
+
+        // 현재 회차는 chapter snapshot에서 이미 알고 있으므로 네트워크 조회를
+        // 기다리지 않고 즉시 하단 상태 UI를 갱신한다.
+        updateAutomationLabels()
+
         requestEpisodeRange(
           novelNoHint = chapter.novelNo.takeIf { it.matches(Regex("[0-9]+")) },
           currentEpisodeHint = chapter.episodeNumber.takeIf { it >= 0 },
@@ -2871,20 +2905,130 @@ class MainActivity : AppCompatActivity() {
             var hintedCurrent = $hintedCurrent;
             var knownLatest = $knownLatest;
 
-            var domNovelNo = (document.getElementById('novel_no') || {}).value || '';
-            var novelNo = /^\d+$/.test(String(hintedNovelNo || ''))
-              ? String(hintedNovelNo)
-              : String(domNovelNo || '');
+            function positiveInt(value) {
+              var text = String(value == null ? '' : value).trim();
+              if (!/^\d+$/.test(text)) return -1;
+              var number = Number(text);
+              return Number.isInteger(number) && number >= 0 ? number : -1;
+            }
 
-            var epText = (document.querySelector('.menu-top-tag') || {}).textContent || '';
-            var currentMatch = epText.match(/EP\.\s*(\d+)/i) || epText.match(/(\d+)/);
-            var domCurrent = currentMatch ? Number(currentMatch[1]) : -1;
-            var current =
-              Number.isInteger(hintedCurrent) && hintedCurrent >= 0
-                ? hintedCurrent
-                : domCurrent;
+            function readPageNovelData() {
+              try {
+                if (
+                  typeof novelData !== 'undefined' &&
+                  novelData &&
+                  novelData.content_data
+                ) {
+                  return novelData;
+                }
+              } catch (_) {}
+
+              try {
+                var raw = localStorage.getItem('userLastNovelData');
+                var list = raw ? JSON.parse(raw) : [];
+                if (!Array.isArray(list)) return null;
+
+                var currentContentNo =
+                  String((document.getElementById('content_no') || {}).value || '');
+
+                for (var i = list.length - 1; i >= 0; i--) {
+                  var item = list[i];
+                  if (!item || !item.content_data) continue;
+
+                  if (
+                    currentContentNo &&
+                    String(item.episode_no || '') === currentContentNo
+                  ) {
+                    return item;
+                  }
+
+                  if (
+                    hintedNovelNo &&
+                    String(item.content_data.novel_no || '') === String(hintedNovelNo)
+                  ) {
+                    return item;
+                  }
+                }
+              } catch (_) {}
+              return null;
+            }
+
+            function resolveNovelNo(pageData) {
+              var candidates = [
+                hintedNovelNo,
+                (document.getElementById('novel_no') || {}).value,
+                (document.querySelector('input[name="novel_no"]') || {}).value,
+                pageData && pageData.content_data
+                  ? pageData.content_data.novel_no
+                  : ''
+              ];
+
+              for (var i = 0; i < candidates.length; i++) {
+                var value = positiveInt(candidates[i]);
+                if (value > 0) return String(value);
+              }
+              return '';
+            }
+
+            function resolveCurrentEpisode() {
+              if (Number.isInteger(hintedCurrent) && hintedCurrent >= 0) {
+                return hintedCurrent;
+              }
+
+              var tag =
+                String(
+                  (document.querySelector('.menu-top-tag') || {}).textContent || ''
+                ).trim();
+
+              var epMatch = tag.match(/EP\.\s*(\d+)/i);
+              if (epMatch) return Number(epMatch[1]);
+
+              // 노벨피아 프롤로그 실제 표기:
+              // <span class="menu-top-tag">Prologue</span>
+              if (/^prologue$/i.test(tag)) return 0;
+
+              var title =
+                String(
+                  (document.querySelector('.menu-top-title') || {}).textContent || ''
+                ).trim();
+
+              // 실제 프롤로그는 "0. 프롤로그" 형태다.
+              var titleNumber = title.match(/^(\d+)\s*[.．]\s*/);
+              if (titleNumber) return Number(titleNumber[1]);
+
+              if (/프롤로그/i.test(title) && /^\s*0\b/.test(title)) return 0;
+              return -1;
+            }
+
+            function embeddedLatest(pageData, current) {
+              if (!pageData || !pageData.content_data) return -1;
+              var value = positiveInt(pageData.content_data.count_book);
+              return value >= current ? value : -1;
+            }
+
+            var pageData = readPageNovelData();
+            var novelNo = resolveNovelNo(pageData);
+            var current = resolveCurrentEpisode();
 
             if (!novelNo || current < 0) return;
+
+            // 페이지 HTML 자체의 novelData.content_data.count_book 또는 같은 작품의
+            // 세션 캐시가 있으면 네트워크를 기다릴 필요가 없다.
+            var pageLatest = embeddedLatest(pageData, current);
+            var cachedLatest =
+              Number.isInteger(knownLatest) && knownLatest >= current
+                ? knownLatest
+                : -1;
+            var fastLatest = Math.max(pageLatest, cachedLatest);
+
+            if (
+              fastLatest >= current &&
+              window._NPTTS &&
+              typeof window._NPTTS.onEpisodeRange === 'function'
+            ) {
+              window._NPTTS.onEpisodeRange(String(novelNo), current, fastLatest);
+              return;
+            }
 
             var latestFromList = 0;
             var latestFromSummary = 0;
@@ -2892,7 +3036,9 @@ class MainActivity : AppCompatActivity() {
             function collectEpisodeNumbers(html) {
               try {
                 var doc = new DOMParser().parseFromString(html, 'text/html');
-                var text = doc.body ? (doc.body.innerText || doc.body.textContent || '') : '';
+                var text = doc.body
+                  ? (doc.body.innerText || doc.body.textContent || '')
+                  : '';
                 var regex = /\bEP\.\s*(\d+)/ig;
                 var match;
                 var maxValue = 0;
@@ -2949,11 +3095,13 @@ class MainActivity : AppCompatActivity() {
 
                 for (var i = 0; i < rows.length; i++) {
                   var category = rows[i].querySelector('.category-title');
-                  var categoryText = category ? (category.textContent || '').trim() : '';
+                  var categoryText =
+                    category ? (category.textContent || '').trim() : '';
                   if (categoryText !== '회차') continue;
 
                   var value = rows[i].querySelector('.writer-name, .gray-txt');
-                  var valueText = value ? (value.textContent || '') : (rows[i].textContent || '');
+                  var valueText =
+                    value ? (value.textContent || '') : (rows[i].textContent || '');
                   var countMatch = valueText.match(/([\d,]+)\s*회차/);
                   if (countMatch) {
                     latestFromSummary =
@@ -2961,24 +3109,11 @@ class MainActivity : AppCompatActivity() {
                     break;
                   }
                 }
-
-                if (!latestFromSummary) {
-                  var pageText =
-                    workDoc.body
-                      ? (workDoc.body.innerText || workDoc.body.textContent || '')
-                      : '';
-                  var fallback = pageText.match(/회차\s*([\d,]+)\s*회차/);
-                  if (fallback) {
-                    latestFromSummary =
-                      Number(String(fallback[1]).replace(/,/g, '')) || 0;
-                  }
-                }
               }
             } catch (_) {}
 
             var latest = Math.max(
               current,
-              Number.isInteger(knownLatest) ? knownLatest : -1,
               latestFromList,
               latestFromSummary
             );
@@ -2999,45 +3134,112 @@ class MainActivity : AppCompatActivity() {
 
     fun updateEpisodeRange(novelNo: String, currentEpisode: Int, latestEpisode: Int) {
       val sameNovel = currentNovelNo == novelNo
+      val mergedLatest =
+        maxOf(
+          latestEpisodeByNovel[novelNo] ?: -1,
+          latestEpisode,
+          currentEpisode,
+        )
+      latestEpisodeByNovel[novelNo] = mergedLatest
 
+      // 다음화 선로딩 중 이전 화면에서 늦게 도착한 응답은 현재 재생 회차를
+      // 뒤로 되돌리지 않고 최신 회차 정보만 합친다.
       if (
         sameNovel &&
         currentEpisodeNumber >= 0 &&
         currentEpisode != currentEpisodeNumber &&
         (active || waitingForNextChapter || chapterBuildInProgress)
       ) {
-        latestEpisodeNumber = maxOf(latestEpisodeNumber, latestEpisode)
+        latestEpisodeNumber = maxOf(latestEpisodeNumber, mergedLatest)
         updateAutomationLabels()
+        maybeOpenPendingStopEpisodeDialog()
         return
       }
 
       if (!sameNovel) {
         currentNovelNo = novelNo
-        latestEpisodeNumber = -1
       }
 
       currentEpisodeNumber = currentEpisode
-      latestEpisodeNumber = maxOf(latestEpisodeNumber, latestEpisode, currentEpisode)
+      latestEpisodeNumber = maxOf(latestEpisodeNumber, mergedLatest)
       updateAutomationLabels()
+      maybeOpenPendingStopEpisodeDialog()
+    }
+
+    private fun maybeOpenPendingStopEpisodeDialog() {
+      if (!pendingStopEpisodeDialog) return
+      if (
+        currentNovelNo.isBlank() ||
+        currentEpisodeNumber < 0 ||
+        latestEpisodeNumber < currentEpisodeNumber
+      ) {
+        return
+      }
+
+      pendingStopEpisodeDialog = false
+      mainHandler.post {
+        if (isOverlayVisible()) showStopEpisodeDialog()
+      }
+    }
+
+    private fun setAutomationToggleStyle(
+      view: TextView?,
+      enabled: Boolean,
+    ) {
+      view ?: return
+      view.setTextColor(if (enabled) Color.WHITE else Color.parseColor("#A8A8A8"))
+      view.setTypeface(view.typeface, if (enabled) Typeface.BOLD else Typeface.NORMAL)
+      view.alpha = if (enabled) 1.0f else 0.82f
+    }
+
+    private fun setRegexNavigationStyle() {
+      regexText?.apply {
+        text = "정규식"
+        setTextColor(Color.parseColor("#A8A8A8"))
+        setTypeface(typeface, Typeface.NORMAL)
+        alpha = 1.0f
+      }
     }
 
     private fun updateAutomationLabels() {
+      val sleepEnabled =
+        sleepTimerDeadline > android.os.SystemClock.elapsedRealtime()
       sleepText?.text =
-        if (sleepTimerDeadline > android.os.SystemClock.elapsedRealtime()) {
+        if (sleepEnabled) {
           val remain =
             (sleepTimerDeadline - android.os.SystemClock.elapsedRealtime() + 59_999L) / 60_000L
           "취침 ${remain}분"
         } else {
           "취침"
         }
+      setAutomationToggleStyle(sleepText, sleepEnabled)
+
+      val stopEnabled = stopEpisodeEnabled && stopEpisodeTarget > 0
       stopEpisodeText?.text =
-        if (stopEpisodeEnabled && stopEpisodeTarget > 0) {
-          "${stopEpisodeTarget}화까지"
-        } else if (currentEpisodeNumber >= 0 && latestEpisodeNumber >= currentEpisodeNumber) {
+        if (stopEnabled) {
+          if (currentEpisodeNumber >= 0) {
+            "${currentEpisodeNumber}/${stopEpisodeTarget}화까지"
+          } else {
+            "${stopEpisodeTarget}화까지"
+          }
+        } else if (
+          currentEpisodeNumber >= 0 &&
+          latestEpisodeNumber >= currentEpisodeNumber
+        ) {
           "${currentEpisodeNumber}/${latestEpisodeNumber}화"
+        } else if (currentEpisodeNumber >= 0) {
+          "${currentEpisodeNumber}화"
         } else {
           "N화까지"
         }
+      setAutomationToggleStyle(stopEpisodeText, stopEnabled)
+
+      // 정주행은 토글 상태를 문구 변경이 아니라 스타일로 표현한다.
+      modeText?.text = "정주행"
+      setAutomationToggleStyle(modeText, bingeMode)
+
+      // 정규식은 ON/OFF 기능이 아니라 전역/작품별 정규식 메뉴 진입 버튼이다.
+      setRegexNavigationStyle()
     }
 
     private fun showSleepTimerDialog() {
@@ -3103,6 +3305,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showStopEpisodeDialog() {
       if (currentNovelNo.isBlank() || currentEpisodeNumber < 0 || latestEpisodeNumber < currentEpisodeNumber) {
+        pendingStopEpisodeDialog = true
         requestEpisodeRange()
         Toast.makeText(
           this@MainActivity,
@@ -3112,6 +3315,7 @@ class MainActivity : AppCompatActivity() {
         return
       }
 
+      pendingStopEpisodeDialog = false
       val minimumTargetEpisode = maxOf(1, currentEpisodeNumber)
       if (latestEpisodeNumber < minimumTargetEpisode) {
         Toast.makeText(
@@ -3196,7 +3400,7 @@ class MainActivity : AppCompatActivity() {
 
       modeText?.setOnClickListener {
         bingeMode = !bingeMode
-        (it as TextView).text = if (bingeMode) "정주행" else "한 화"
+        updateAutomationLabels()
       }
 
       findViewById<TextView>(R.id.tts_speed_minus).setOnClickListener { adjustSpeed(-0.1f) }

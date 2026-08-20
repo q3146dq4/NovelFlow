@@ -500,16 +500,103 @@
       document.title ||
       "";
 
-    const numberMatch =
-      episodeTag.match(/EP\.\s*(\d+)/i) ||
-      episodeTag.match(/(\d+)/);
-    const episodeNumber = numberMatch ? Number(numberMatch[1]) : -1;
+    function positiveInt(value) {
+      const text = String(value == null ? "" : value).trim();
+      if (!/^\d+$/.test(text)) return -1;
+      const number = Number(text);
+      return Number.isInteger(number) && number >= 0 ? number : -1;
+    }
 
-    const novelNo = document.getElementById("novel_no")?.value || "";
+    function resolveEpisodeNumber() {
+      const epMatch = episodeTag.match(/EP\.\s*(\d+)/i);
+      if (epMatch) return Number(epMatch[1]);
+
+      // 실제 노벨피아 프롤로그는 EP.0이 아니라 "Prologue"로 표시된다.
+      if (/^prologue$/i.test(episodeTag)) return 0;
+
+      // 실제 샘플: <div class="menu-top-title">0. 프롤로그</div>
+      const titleNumber = title.match(/^(\d+)\s*[.．]\s*/);
+      if (titleNumber) return Number(titleNumber[1]);
+
+      if (/프롤로그/i.test(title) && /^\s*0\b/.test(title)) return 0;
+      return -1;
+    }
+
+    function readPageNovelData() {
+      try {
+        if (
+          typeof novelData !== "undefined" &&
+          novelData &&
+          novelData.content_data
+        ) {
+          return novelData;
+        }
+      } catch (_) {}
+
+      try {
+        const raw = localStorage.getItem("userLastNovelData");
+        const list = raw ? JSON.parse(raw) : [];
+        if (!Array.isArray(list)) return null;
+
+        const currentContentNo =
+          String(document.getElementById("content_no")?.value || "");
+        const directNovelNo =
+          String(document.getElementById("novel_no")?.value || "");
+
+        for (let i = list.length - 1; i >= 0; i--) {
+          const item = list[i];
+          if (!item?.content_data) continue;
+
+          if (
+            currentContentNo &&
+            String(item.episode_no || "") === currentContentNo
+          ) {
+            return item;
+          }
+
+          if (
+            directNovelNo &&
+            String(item.content_data.novel_no || "") === directNovelNo
+          ) {
+            return item;
+          }
+        }
+      } catch (_) {}
+      return null;
+    }
+
+    function resolveNovelNo(pageData) {
+      const candidates = [
+        document.getElementById("novel_no")?.value,
+        document.querySelector('input[name="novel_no"]')?.value,
+        pageData?.content_data?.novel_no,
+      ];
+
+      for (const candidate of candidates) {
+        const value = positiveInt(candidate);
+        if (value > 0) return String(value);
+      }
+      return "";
+    }
+
+    const episodeNumber = resolveEpisodeNumber();
+    const pageData = readPageNovelData();
+    const novelNo = resolveNovelNo(pageData);
+
+    let latestEpisode = -1;
+    const embeddedLatest =
+      positiveInt(pageData?.content_data?.count_book);
+    if (
+      embeddedLatest >= 0 &&
+      (episodeNumber < 0 || embeddedLatest >= episodeNumber)
+    ) {
+      latestEpisode = embeddedLatest;
+    }
 
     return JSON.stringify({
       novelNo,
       episodeNumber,
+      latestEpisode,
       episode: episodeNumber >= 0 ? `EP.${episodeNumber}` : episodeTag,
       title,
       lineCount: state.lines.length,
